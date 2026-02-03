@@ -1,0 +1,8 @@
+{
+  "name": "Wally's Wingman",
+  "description": "An 'External Executive Function' app designed for seniors with Alzheimer's, providing a voice-first cockpit interface for daily support and medical management.",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ]
+}

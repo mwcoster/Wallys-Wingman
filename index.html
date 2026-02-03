@@ -1,0 +1,139 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Wally's Wingman</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700;800&family=Inter:wght@400;600;800&family=Architects+Daughter&display=swap" rel="stylesheet">
+    <style>
+        body {
+            background-color: #000;
+            color: #00ff41;
+            font-family: 'JetBrains+Mono', monospace;
+            font-size: 18px;
+            overflow: hidden;
+            touch-action: manipulation;
+        }
+        
+        a {
+            text-decoration: none !important;
+        }
+
+        .cockpit-glow {
+            text-shadow: 0 0 10px rgba(0, 255, 65, 0.7);
+        }
+
+        .amber-glow {
+            text-shadow: 0 0 10px rgba(255, 191, 0, 0.7);
+        }
+        
+        .radar-sweep {
+            background: conic-gradient(
+                from 0deg, 
+                transparent 0deg,
+                transparent 240deg, 
+                rgba(0, 255, 65, 0.02) 270deg, 
+                rgba(0, 255, 65, 0.08) 320deg, 
+                rgba(0, 255, 65, 0.25) 360deg
+            );
+            animation: sweep 4.4s linear infinite;
+            filter: blur(1.5px) drop-shadow(0 0 8px rgba(0, 255, 65, 0.2));
+            position: relative;
+            border-radius: 50%;
+        }
+
+        @keyframes sweep {
+            from { transform: translate(-50%, -50%) rotate(0deg); }
+            to { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        
+        .btn-80s {
+            position: relative;
+            border-style: solid;
+            border-width: 6px;
+            transition: all 0.1s ease;
+            text-transform: uppercase;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+            overflow: hidden;
+        }
+        
+        .btn-80s-green {
+            background: rgba(0, 40, 0, 0.9);
+            border-top-color: rgba(0, 255, 65, 0.4);
+            border-left-color: rgba(0, 255, 65, 0.4);
+            border-right-color: rgba(0, 30, 0, 1);
+            border-bottom-color: rgba(0, 30, 0, 1);
+            color: #00ff41;
+            box-shadow: 0 6px 0 #003300;
+        }
+        
+        .btn-80s-green.active {
+            background: #00ff41;
+            color: #000;
+            border-color: #00ff41;
+            box-shadow: 0 0 40px rgba(0, 255, 65, 0.9);
+            transform: translateY(4px);
+        }
+
+        .btn-80s-amber {
+            background: rgba(40, 30, 0, 0.9);
+            border-top-color: rgba(255, 191, 0, 0.4);
+            border-left-color: rgba(255, 191, 0, 0.4);
+            border-right-color: rgba(40, 20, 0, 1);
+            border-bottom-color: rgba(40, 20, 0, 1);
+            color: #ffbf00;
+            box-shadow: 0 6px 0 #664d00;
+        }
+
+        .btn-80s-amber.active {
+            background: #ffbf00;
+            color: #000;
+            border-color: #ffbf00;
+            box-shadow: 0 0 40px rgba(255, 191, 0, 0.9);
+            transform: translateY(4px);
+        }
+
+        .crt::before {
+            content: " ";
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            bottom: 0;
+            right: 0;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.15) 50%), linear-gradient(90deg, rgba(255, 0, 0, 0.03), rgba(0, 255, 0, 0.01), rgba(0, 0, 255, 0.03));
+            z-index: 200;
+            background-size: 100% 3px, 3px 100%;
+            pointer-events: none;
+        }
+
+        .data-panel {
+            background: rgba(0, 0, 0, 0.95);
+            border: 2px solid rgba(0, 255, 65, 0.4);
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.8);
+        }
+
+        .handwritten-entry {
+            font-family: 'Architects Daughter', cursive;
+        }
+    </style>
+<script type="importmap">
+{
+  "imports": {
+    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
+    "@google/genai": "https://esm.sh/@google/genai@^1.39.0",
+    "react/": "https://esm.sh/react@^19.2.4/",
+    "react": "https://esm.sh/react@^19.2.4"
+  }
+}
+</script>
+</head>
+<body class="crt">
+    <div id="root"></div>
+</body>
+</html>
