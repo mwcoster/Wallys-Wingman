@@ -4,7 +4,7 @@ import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { RadarDashboard } from './components/RadarDashboard';
 import { ActionButtons } from './components/ActionButtons';
 import { LogView } from './components/LogView';
-import { AppState, LogEntry } from './types';
+import { AppState, LogEntry, GroundingSource } from './types';
 import { SYSTEM_INSTRUCTION, UPDATE_LOG_FUNCTION } from './constants';
 import { decode, encode, decodeAudioData } from './services/audioUtils';
 
@@ -33,14 +33,11 @@ const App: React.FC = () => {
   const isConnectingRef = useRef(false);
   const isWrappingUpRef = useRef(false);
 
-  // Proactive check for API key presence
   useEffect(() => {
     const checkAuth = async () => {
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey && !process.env.API_KEY) {
-          setShowAuthRequired(true);
-        }
+        if (!hasKey && !process.env.API_KEY) setShowAuthRequired(true);
       } else if (!process.env.API_KEY) {
         setShowAuthRequired(true);
       }
@@ -86,6 +83,18 @@ const App: React.FC = () => {
       setDisplayTopic("");
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      // Attempt to get location context for the system instruction
+      let locationContext = "";
+      try {
+        const pos = await new Promise<GeolocationPosition>((res, rej) => 
+          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 3000 })
+        );
+        locationContext = `\n[NOTE: Wally is currently at Lat: ${pos.coords.latitude}, Long: ${pos.coords.longitude}. Use this for local info.]`;
+      } catch (e) {
+        console.log("GPS unavailable, using home address context only.");
+      }
+
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -110,6 +119,7 @@ const App: React.FC = () => {
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'update_flight_log') {
                   const args = fc.args as any;
+                  // If we are wrapping up OR the AI explicitly sends a summary
                   if (isWrappingUpRef.current || args.topic === "SESSION SUMMARY") {
                     setLogs(prev => [{
                       id: Date.now().toString(),
@@ -117,11 +127,17 @@ const App: React.FC = () => {
                       topic: args.topic || 'SESSION SUMMARY',
                       bullets: args.bullets || []
                     }, ...prev]);
-                    if (isWrappingUpRef.current) setTimeout(() => closeSessionInternal(), 1500);
+                    
+                    // If this was the final wrap-up call, close after a delay
+                    if (isWrappingUpRef.current) {
+                      setTimeout(() => closeSessionInternal(), 2000);
+                    }
                   } else {
+                    // Normal turn-by-turn update
                     setDisplayBullets(args.bullets || []);
                     setDisplayTopic(args.topic || "WINGMAN NOTE");
                   }
+
                   sessionPromise.then(s => s.sendToolResponse({
                     functionResponses: { id: fc.id, name: fc.name, response: { result: "Log Updated" } }
                   })).catch(() => {});
@@ -140,7 +156,9 @@ const App: React.FC = () => {
               source.connect(outputNodeRef.current);
               source.addEventListener('ended', () => {
                 sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0 && !isWrappingUpRef.current) setAppState(AppState.LISTENING);
+                if (sourcesRef.current.size === 0 && !isWrappingUpRef.current) {
+                  setAppState(AppState.LISTENING);
+                }
               });
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += audioBuffer.duration;
@@ -167,9 +185,9 @@ const App: React.FC = () => {
           }
         },
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
+          systemInstruction: SYSTEM_INSTRUCTION + locationContext,
           responseModalities: [Modality.AUDIO],
-          tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }, { googleSearch: {} }],
+          tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } }
         }
       });
@@ -199,22 +217,23 @@ const App: React.FC = () => {
   };
 
   const handleStopTalk = () => {
-    if (sessionRef.current && appState !== AppState.IDLE) {
+    if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
       isWrappingUpRef.current = true;
-      sessionRef.current.sendRealtimeInput({
-        media: {
-          data: encode(new TextEncoder().encode("Wally is signing off. Provide the final SESSION SUMMARY for the logbook now.")),
-          mimeType: 'text/plain'
-        }
-      });
-      setTimeout(() => { if (isWrappingUpRef.current) closeSessionInternal(); }, 8000);
+      // We don't send text here because sendRealtimeInput text isn't a standard part of the Live session,
+      // instead we just trigger the wrap up UI state and wait for the model to finish any current turn
+      // or we manually force-close if it hangs.
+      setTimeout(() => {
+        if (isWrappingUpRef.current) closeSessionInternal();
+      }, 5000);
     } else {
       closeSessionInternal();
     }
   };
 
   const toggleLog = () => {
-    if (appState === AppState.LISTENING || appState === AppState.RESPONDING) handleStopTalk();
+    if (appState === AppState.LISTENING || appState === AppState.RESPONDING) {
+      handleStopTalk();
+    }
     setAppState(prev => prev === AppState.LOG_VIEW ? AppState.IDLE : AppState.LOG_VIEW);
   };
 
@@ -234,12 +253,17 @@ const App: React.FC = () => {
               <div className="text-center bg-black/95 p-8 rounded-lg border-2 border-[#ffbf00] shadow-[0_0_50px_rgba(255,191,0,0.3)] max-w-sm">
                 <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Comm Link Offline</h2>
                 <p className="text-xs text-[#ffbf00]/70 mb-6 uppercase tracking-widest font-bold">Authorization required to establish satellite uplink.</p>
-                <button onClick={() => window.aistudio?.openSelectKey().then(() => setShowAuthRequired(false))} className="bg-[#ffbf00] text-black w-full py-5 rounded text-2xl font-black uppercase tracking-widest active:scale-95">Authorize</button>
+                <button 
+                  onClick={() => window.aistudio?.openSelectKey().then(() => setShowAuthRequired(false))} 
+                  className="bg-[#ffbf00] text-black w-full py-5 rounded text-2xl font-black uppercase tracking-widest active:scale-95"
+                >
+                  Authorize
+                </button>
               </div>
             )}
             {isWrappingUpRef.current && (
               <div className="bg-black/80 px-4 py-3 border-2 border-[#ffbf00] rounded-lg animate-pulse shadow-[0_0_30px_rgba(255,191,0,0.3)]">
-                <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Logging Session Summary...</span>
+                <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Saving Session Data...</span>
               </div>
             )}
           </div>
@@ -249,6 +273,8 @@ const App: React.FC = () => {
       )}
 
       {appState === AppState.LOG_VIEW && <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />}
+      
+      {/* HUD Vignette Overlay */}
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle,transparent_40%,rgba(0,0,0,0.8)_100%)]"></div>
     </div>
   );
