@@ -1,3 +1,4 @@
+
 import React from 'react';
 import { AppState } from '../types';
 
@@ -5,9 +6,10 @@ interface RadarDashboardProps {
   state: AppState;
   bullets: string[];
   topic: string;
+  error?: string | null;
 }
 
-export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, topic }) => {
+export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, topic, error }) => {
   const isInteracting = state === AppState.LISTENING || state === AppState.RESPONDING;
   const showBullets = bullets.length > 0 && state !== AppState.LOG_VIEW;
   const isIdle = state === AppState.IDLE;
@@ -45,17 +47,30 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
           </div>
 
           {isIdle && !showBullets && (
-            <div className="absolute z-20 flex flex-col items-center pointer-events-none">
-              <div className="text-4xl font-black tracking-tight font-mono text-[#ffbf00]/60 uppercase amber-glow">
-                Standing by...
-              </div>
-              <div className="mt-4 flex flex-col items-center gap-2">
-                 <div className="flex items-center gap-4">
-                    <div className="h-[1px] w-12 bg-[#00ff41]/20"></div>
-                    <div className="text-[10px] text-[#00ff41]/40 font-bold uppercase tracking-[0.5em]">LCK SECURE</div>
-                    <div className="h-[1px] w-12 bg-[#00ff41]/20"></div>
-                 </div>
-              </div>
+            <div className="absolute z-20 flex flex-col items-center pointer-events-none text-center px-12">
+              {error ? (
+                <>
+                  <div className="text-3xl font-black tracking-tight font-mono text-red-500 uppercase animate-pulse">
+                    COMM LINK FAILURE
+                  </div>
+                  <div className="text-xs text-red-500/60 font-bold uppercase mt-2 tracking-widest">
+                    {error}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="text-4xl font-black tracking-tight font-mono text-[#ffbf00]/60 uppercase amber-glow">
+                    Standing by...
+                  </div>
+                  <div className="mt-4 flex flex-col items-center gap-2">
+                     <div className="flex items-center gap-4">
+                        <div className="h-[1px] w-12 bg-[#00ff41]/20"></div>
+                        <div className="text-[10px] text-[#00ff41]/40 font-bold uppercase tracking-[0.5em]">LCK SECURE</div>
+                        <div className="h-[1px] w-12 bg-[#00ff41]/20"></div>
+                     </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
         </div>

@@ -4,26 +4,16 @@ import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { RadarDashboard } from './components/RadarDashboard';
 import { ActionButtons } from './components/ActionButtons';
 import { LogView } from './components/LogView';
-import { AppState, LogEntry, GroundingSource } from './types';
+import { AppState, LogEntry } from './types';
 import { SYSTEM_INSTRUCTION, UPDATE_LOG_FUNCTION } from './constants';
 import { decode, encode, decodeAudioData } from './services/audioUtils';
-
-declare global {
-  interface AIStudio {
-    hasSelectedApiKey: () => Promise<boolean>;
-    openSelectKey: () => Promise<void>;
-  }
-  interface Window {
-    aistudio?: AIStudio;
-  }
-}
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [displayBullets, setDisplayBullets] = useState<string[]>([]);
   const [displayTopic, setDisplayTopic] = useState<string>("");
-  const [showAuthRequired, setShowAuthRequired] = useState<boolean>(false);
+  const [commError, setCommError] = useState<string | null>(null);
   
   const audioContextsRef = useRef<{ input: AudioContext; output: AudioContext } | null>(null);
   const outputNodeRef = useRef<GainNode | null>(null);
@@ -32,35 +22,6 @@ const App: React.FC = () => {
   const sessionRef = useRef<any>(null);
   const isConnectingRef = useRef(false);
   const isWrappingUpRef = useRef(false);
-
-  useEffect(() => {
-    const checkAuth = async () => {
-      // Look for the API key in both process.env and standard browser-friendly locations
-      const apiKey = process.env.API_KEY || (window as any).process?.env?.API_KEY;
-
-      // If we have a hardcoded key in the environment, we're good
-      if (apiKey) {
-        setShowAuthRequired(false);
-        return;
-      }
-
-      // If we're in AI Studio, check for key selection
-      if (window.aistudio) {
-        try {
-          const hasKey = await window.aistudio.hasSelectedApiKey();
-          if (!hasKey) {
-            setShowAuthRequired(true);
-          }
-        } catch (e) {
-          setShowAuthRequired(true);
-        }
-      } else {
-        // If no hardcoded key and no AI Studio environment, we can't function
-        setShowAuthRequired(true);
-      }
-    };
-    checkAuth();
-  }, []);
 
   const initAudio = () => {
     if (!audioContextsRef.current) {
@@ -92,6 +53,7 @@ const App: React.FC = () => {
     if (isConnectingRef.current || sessionRef.current) return;
     
     try {
+      setCommError(null);
       isConnectingRef.current = true;
       initAudio();
       setAppState(AppState.LISTENING);
@@ -106,12 +68,21 @@ const App: React.FC = () => {
         const pos = await new Promise<GeolocationPosition>((res, rej) => 
           navigator.geolocation.getCurrentPosition(res, rej, { timeout: 3000 })
         );
-        locationContext = `\n[NOTE: Wally is currently at Lat: ${pos.coords.latitude}, Long: ${pos.coords.longitude}. Use this for local info.]`;
+        locationContext = `\n[NOTE: Wally is currently at Lat: ${pos.coords.latitude}, Long: ${pos.coords.longitude}.]`;
       } catch (e) {
-        console.log("GPS unavailable, using home address context only.");
+        console.log("GPS unavailable.");
       }
 
-      const apiKey = process.env.API_KEY || (window as any).process?.env?.API_KEY || '';
+      // Use the API key directly from process.env
+      const apiKey = process.env.API_KEY || '';
+      
+      if (!apiKey) {
+        setCommError("API KEY MISSING");
+        setAppState(AppState.IDLE);
+        isConnectingRef.current = false;
+        return;
+      }
+
       const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
@@ -191,9 +162,8 @@ const App: React.FC = () => {
             setAppState(AppState.IDLE);
           },
           onerror: (e: any) => {
-            if (e.message?.includes("403") || e.message?.includes("entity") || e.message?.includes("API_KEY_INVALID")) {
-              setShowAuthRequired(true);
-            }
+            console.error("Live Session Error:", e);
+            setCommError("LINK ERROR: " + (e.message || "403"));
             sessionRef.current = null;
             setAppState(AppState.IDLE);
           }
@@ -207,9 +177,8 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
-      if (err.message?.includes("403") || err.message?.includes("entity") || err.message?.includes("API_KEY_INVALID")) {
-        setShowAuthRequired(true);
-      }
+      console.error("Connection Failed:", err);
+      setCommError("COMM FAILURE");
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -233,6 +202,7 @@ const App: React.FC = () => {
   const handleStopTalk = () => {
     if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
       isWrappingUpRef.current = true;
+      // Final tool call usually happens right before or after this
       setTimeout(() => {
         if (isWrappingUpRef.current) closeSessionInternal();
       }, 5000);
@@ -248,19 +218,9 @@ const App: React.FC = () => {
     setAppState(prev => prev === AppState.LOG_VIEW ? AppState.IDLE : AppState.LOG_VIEW);
   };
 
-  const handleAuthorize = async () => {
-    if (window.aistudio) {
-      await window.aistudio.openSelectKey();
-      setShowAuthRequired(false);
-    } else {
-      // If no aistudio, suggest the user check their Vercel variables
-      alert("Satellite connection failed. Please ensure your API Key is correctly configured in your deployment settings.");
-    }
-  };
-
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col items-center select-none font-mono">
-      <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} />
+      <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} error={commError} />
 
       {appState !== AppState.LOG_VIEW && (
         <main className="z-10 w-full h-full flex flex-col p-6 pt-10 pb-4">
@@ -270,18 +230,6 @@ const App: React.FC = () => {
           </header>
 
           <div className="flex-1 flex flex-col justify-end items-center mb-6">
-            {showAuthRequired && (
-              <div className="text-center bg-black/95 p-8 rounded-lg border-2 border-[#ffbf00] shadow-[0_0_50px_rgba(255,191,0,0.3)] max-w-sm">
-                <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Comm Link Offline</h2>
-                <p className="text-xs text-[#ffbf00]/70 mb-6 uppercase tracking-widest font-bold">Authorization required to establish satellite uplink.</p>
-                <button 
-                  onClick={handleAuthorize} 
-                  className="bg-[#ffbf00] text-black w-full py-5 rounded text-2xl font-black uppercase tracking-widest active:scale-95"
-                >
-                  Authorize
-                </button>
-              </div>
-            )}
             {isWrappingUpRef.current && (
               <div className="bg-black/80 px-4 py-3 border-2 border-[#ffbf00] rounded-lg animate-pulse shadow-[0_0_30px_rgba(255,191,0,0.3)]">
                 <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Saving Session Data...</span>

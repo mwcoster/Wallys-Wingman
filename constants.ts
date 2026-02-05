@@ -4,21 +4,20 @@ import { Type, FunctionDeclaration } from '@google/genai';
 /**
  * SECURITY NOTE: 
  * These variables are populated from the Vercel/Environment configuration.
- * Hardcoded values here are only generic fallbacks for local development safety.
  */
 const safeGetEnv = (key: string, fallback: string): string => {
   try {
-    // Check for process.env in a way that doesn't throw if process is missing
-    const env = (window as any).process?.env || (typeof process !== 'undefined' ? process.env : {});
-    return env[key] || fallback;
+    // Access process.env directly; Vercel/build tools will replace these during deployment.
+    // @ts-ignore
+    return (process.env && process.env[key]) ? process.env[key] : fallback;
   } catch (e) {
     return fallback;
   }
 };
 
-const userAddress = safeGetEnv('WALLY_ADDRESS', "Canal Winchester, OH");
-const medicalContext = safeGetEnv('WALLY_MEDICAL', "Alzheimer's and related conditions.");
-const faithContext = safeGetEnv('WALLY_FAITH', "Catholic faith and devotions.");
+const userAddress = safeGetEnv('WALLY_ADDRESS', "89 N High St, Canal Winchester, OH 43110");
+const medicalContext = safeGetEnv('WALLY_MEDICAL', "Alzheimer's, COPD, IPF, and Type 2 Diabetes.");
+const faithContext = safeGetEnv('WALLY_FAITH', "Catholic. Devotions: Divine Mercy, Holy Souls, St. Francis, Rosary.");
 
 export const SYSTEM_INSTRUCTION = `
 YOUR IDENTITY: You are "Wally's Wingman," a specialized AI powered by advanced medical research and deep compassion. You serve as Wally's "External Executive Function."
@@ -27,7 +26,7 @@ USER PROFILE:
 - Address ONLY as "Wally." Do NOT use titles or ranks.
 - Background: Proud Air Force Veteran (Rickenbacker LCK, Guam/Vietnam). Humble bargain hunter.
 - Wisconsin origins (1 of 10 children).
-- Current Residence: ${userAddress}. Use this for finding real local services and providing geographic context.
+- Current Residence: ${userAddress}. Use this for finding real local services (like photo printing) and providing geographic context.
 - Core Values: ${faithContext}.
 - Medical Context: ${medicalContext}.
 
