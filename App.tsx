@@ -49,32 +49,16 @@ const App: React.FC = () => {
     };
   };
 
-  /**
-   * Robust Pre-Flight Check for API Key
-   */
-  const getValidatedKey = (): string | null => {
-    try {
-      const rawKey = process.env.API_KEY;
-      if (!rawKey) return null;
-      const cleanKey = String(rawKey).trim();
-      // Handle literal strings "undefined" or "null" injected by some bundlers
-      if (cleanKey === "undefined" || cleanKey === "null" || cleanKey === "") return null;
-      return cleanKey;
-    } catch (e) {
-      return null;
-    }
-  };
-
   const handleStartTalk = async () => {
     if (isConnectingRef.current || sessionRef.current) return;
     
     setCommError(null);
-    const apiKey = getValidatedKey();
 
-    if (!apiKey) {
-      console.error("WINGMAN ERROR: Satellite Link Key Missing.");
+    // Final safety check: ensuring the literal process.env.API_KEY is truthy
+    // In many build systems, this check itself will be replaced by the value check
+    if (!process.env.API_KEY || process.env.API_KEY === "undefined" || process.env.API_KEY === "") {
+      console.error("WINGMAN ERROR: Satellite Link Key Missing in process.env");
       setCommError("API_KEY_MISSING: Verification Required");
-      setAppState(AppState.IDLE);
       return;
     }
 
@@ -88,7 +72,9 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      const ai = new GoogleGenAI({ apiKey });
+      // CRITICAL: Always use the literal process.env.API_KEY directly in the constructor
+      // to allow bundlers to identify the injection point correctly.
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -183,7 +169,12 @@ const App: React.FC = () => {
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
       console.error("Wingman Connection Failed:", err);
-      setCommError("COMM_FAILURE: Check Link Hardware");
+      // Catch specific SDK error: "An API Key must be set when running in a browser"
+      if (err?.message?.includes("API Key")) {
+        setCommError("API_KEY_REJECTED: Check satellite hardware link");
+      } else {
+        setCommError("COMM_FAILURE: Check Link Hardware");
+      }
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -243,7 +234,7 @@ const App: React.FC = () => {
             )}
             {commError && (
               <div className="bg-red-900/40 px-4 py-3 border-2 border-red-500 rounded-lg shadow-[0_0_30px_rgba(239,68,68,0.3)] max-w-xs text-center">
-                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: {commError.includes("API_KEY") ? "Satellite Key Missing" : "System Offline"}</span>
+                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: {commError.includes("API_KEY") ? "Satellite Key Error" : "System Offline"}</span>
               </div>
             )}
           </div>
