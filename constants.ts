@@ -8,6 +8,7 @@ import { Type, FunctionDeclaration } from '@google/genai';
  */
 const getEnv = (key: string, fallback: string): string => {
   try {
+    // Standard process.env access
     // @ts-ignore
     return (process.env && process.env[key]) ? process.env[key] : fallback;
   } catch (e) {

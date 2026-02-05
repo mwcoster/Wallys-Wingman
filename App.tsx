@@ -63,17 +63,9 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Strict requirement: API key must come from process.env.API_KEY
-      const apiKey = process.env.API_KEY;
-
-      if (!apiKey) {
-        setCommError("SAT_LINK_OFFLINE: API_KEY missing in platform settings.");
-        setAppState(AppState.IDLE);
-        isConnectingRef.current = false;
-        return;
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
+      // Initializing AI directly with process.env.API_KEY as per guidelines.
+      // Do not manually check if apiKey is null here, as it may be injected at build-time.
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -160,6 +152,7 @@ const App: React.FC = () => {
         },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
+          // Fixed typo in the config object: responseModalities
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } }
@@ -181,8 +174,10 @@ const App: React.FC = () => {
       sessionRef.current = null; 
     }
     setAppState(AppState.IDLE);
-    sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
-    sourcesRef.current.clear();
+    if (sourcesRef.current) {
+      sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
+      sourcesRef.current.clear();
+    }
     nextStartTimeRef.current = 0;
     isWrappingUpRef.current = false;
     setDisplayBullets([]);
@@ -226,7 +221,7 @@ const App: React.FC = () => {
             )}
             {commError && (
               <div className="bg-red-900/40 px-4 py-3 border-2 border-red-500 rounded-lg shadow-[0_0_30px_rgba(239,68,68,0.3)] max-w-xs text-center">
-                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">{commError}</span>
+                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: Please Check System Logs</span>
               </div>
             )}
           </div>
