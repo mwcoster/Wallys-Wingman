@@ -21,44 +21,33 @@ const App: React.FC = () => {
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const sessionRef = useRef<any>(null);
   const isConnectingRef = useRef(false);
-  const isWrappingUpRef = useRef(false);
+  const isClosingRef = useRef(false);
 
   const initAudio = () => {
     if (!audioContextsRef.current) {
-      const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
-      const input = new AudioContextClass({ sampleRate: 16000 });
-      const output = new AudioContextClass({ sampleRate: 24000 });
-      const outputGain = output.createGain();
-      outputGain.connect(output.destination);
+      const AC = (window.AudioContext || (window as any).webkitAudioContext);
+      const input = new AC({ sampleRate: 16000 });
+      const output = new AC({ sampleRate: 24000 });
+      const gain = output.createGain();
+      gain.connect(output.destination);
       audioContextsRef.current = { input, output };
-      outputNodeRef.current = outputGain;
+      outputNodeRef.current = gain;
     }
-    if (audioContextsRef.current.input.state === 'suspended') audioContextsRef.current.input.resume();
-    if (audioContextsRef.current.output.state === 'suspended') audioContextsRef.current.output.resume();
+    ['input', 'output'].forEach(k => {
+      if ((audioContextsRef.current as any)[k].state === 'suspended') (audioContextsRef.current as any)[k].resume();
+    });
   };
 
-  const createBlob = (data: Float32Array) => {
-    const l = data.length;
-    const int16 = new Int16Array(l);
-    for (let i = 0; i < l; i++) {
-      int16[i] = data[i] * 32768;
-    }
-    return {
-      data: encode(new Uint8Array(int16.buffer)),
-      mimeType: 'audio/pcm;rate=16000',
-    };
-  };
+  const createBlob = (data: Float32Array) => ({
+    data: encode(new Uint8Array(new Int16Array(data.map(v => v * 32768)).buffer)),
+    mimeType: 'audio/pcm;rate=16000',
+  });
 
   const handleStartTalk = async () => {
     if (isConnectingRef.current || sessionRef.current) return;
-    
     setCommError(null);
-
-    // Final safety check: ensuring the literal process.env.API_KEY is truthy
-    // In many build systems, this check itself will be replaced by the value check
-    if (!process.env.API_KEY || process.env.API_KEY === "undefined" || process.env.API_KEY === "") {
-      console.error("WINGMAN ERROR: Satellite Link Key Missing in process.env");
-      setCommError("API_KEY_MISSING: Verification Required");
+    if (!process.env.API_KEY) {
+      setCommError("SAT_LINK_MISSING: Key Verification Required");
       return;
     }
 
@@ -66,14 +55,9 @@ const App: React.FC = () => {
       isConnectingRef.current = true;
       initAudio();
       setAppState(AppState.LISTENING);
-      isWrappingUpRef.current = false;
-      setDisplayBullets([]);
-      setDisplayTopic("");
+      isClosingRef.current = false;
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      
-      // CRITICAL: Always use the literal process.env.API_KEY directly in the constructor
-      // to allow bundlers to identify the injection point correctly.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -82,82 +66,68 @@ const App: React.FC = () => {
           onopen: () => {
             const { input } = audioContextsRef.current!;
             const source = input.createMediaStreamSource(stream);
-            const scriptProcessor = input.createScriptProcessor(4096, 1, 1);
-            scriptProcessor.onaudioprocess = (e) => {
-              const inputData = e.inputBuffer.getChannelData(0);
-              const pcmBlob = createBlob(inputData);
-              sessionPromise.then((session) => {
-                session.sendRealtimeInput({ media: pcmBlob });
-              }).catch(() => {});
+            const proc = input.createScriptProcessor(4096, 1, 1);
+            proc.onaudioprocess = (e) => {
+              if (isClosingRef.current) return;
+              const blob = createBlob(e.inputBuffer.getChannelData(0));
+              sessionPromise.then(s => s.sendRealtimeInput({ media: blob })).catch(() => {});
             };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(input.destination);
+            source.connect(proc);
+            proc.connect(input.destination);
           },
-          onmessage: async (message: LiveServerMessage) => {
-            if (message.toolCall) {
-              for (const fc of message.toolCall.functionCalls) {
+          onmessage: async (msg: LiveServerMessage) => {
+            if (msg.toolCall) {
+              for (const fc of msg.toolCall.functionCalls) {
                 if (fc.name === 'update_flight_log') {
                   const args = fc.args as any;
-                  if (isWrappingUpRef.current || args.topic === "SESSION SUMMARY") {
+                  const isFinal = isClosingRef.current || args.topic?.includes("SUMMARY");
+                  
+                  if (isFinal) {
                     setLogs(prev => [{
                       id: Date.now().toString(),
                       timestamp: Date.now(),
                       topic: args.topic || 'SESSION SUMMARY',
                       bullets: args.bullets || []
                     }, ...prev]);
-                    
-                    if (isWrappingUpRef.current) {
-                      setTimeout(() => closeSessionInternal(), 2000);
-                    }
+                    if (isClosingRef.current) setTimeout(() => closeInternal(), 1500);
                   } else {
                     setDisplayBullets(args.bullets || []);
-                    setDisplayTopic(args.topic || "WINGMAN NOTE");
+                    setDisplayTopic(args.topic || "WINGMAN_HUD");
                   }
-
                   sessionPromise.then(s => s.sendToolResponse({
-                    functionResponses: { id: fc.id, name: fc.name, response: { result: "Log Updated" } }
+                    functionResponses: { id: fc.id, name: fc.name, response: { result: "LOG_OK" } }
                   })).catch(() => {});
                 }
               }
             }
 
-            const base64Audio = message.serverContent?.modelTurn?.parts?.find(p => p.inlineData)?.inlineData?.data;
-            if (base64Audio && audioContextsRef.current && outputNodeRef.current) {
+            const audio = msg.serverContent?.modelTurn?.parts?.find(p => p.inlineData)?.inlineData?.data;
+            if (audio && audioContextsRef.current) {
               setAppState(AppState.RESPONDING);
               const { output } = audioContextsRef.current;
               nextStartTimeRef.current = Math.max(nextStartTimeRef.current, output.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), output, 24000, 1);
-              const source = output.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputNodeRef.current);
-              source.addEventListener('ended', () => {
-                sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0 && !isWrappingUpRef.current) {
-                  setAppState(AppState.LISTENING);
-                }
-              });
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              sourcesRef.current.add(source);
+              const buf = await decodeAudioData(decode(audio), output, 24000, 1);
+              const src = output.createBufferSource();
+              src.buffer = buf;
+              src.connect(outputNodeRef.current!);
+              src.onended = () => {
+                sourcesRef.current.delete(src);
+                if (sourcesRef.current.size === 0 && !isClosingRef.current) setAppState(AppState.LISTENING);
+              };
+              src.start(nextStartTimeRef.current);
+              nextStartTimeRef.current += buf.duration;
+              sourcesRef.current.add(src);
             }
 
-            if (message.serverContent?.interrupted) {
+            if (msg.serverContent?.interrupted) {
               sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
               sourcesRef.current.clear();
               nextStartTimeRef.current = 0;
               setAppState(AppState.LISTENING);
             }
           },
-          onclose: () => {
-            sessionRef.current = null;
-            setAppState(AppState.IDLE);
-          },
-          onerror: (e: any) => {
-            console.error("Link Error:", e);
-            setCommError("COMM_ERROR: Check Satellite Link Configuration");
-            sessionRef.current = null;
-            setAppState(AppState.IDLE);
-          }
+          onclose: () => closeInternal(),
+          onerror: (e) => { setCommError("SAT_LINK_LOSS: Check hardware"); closeInternal(); }
         },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
@@ -167,52 +137,35 @@ const App: React.FC = () => {
         }
       });
       sessionRef.current = await sessionPromise;
-    } catch (err: any) {
-      console.error("Wingman Connection Failed:", err);
-      // Catch specific SDK error: "An API Key must be set when running in a browser"
-      if (err?.message?.includes("API Key")) {
-        setCommError("API_KEY_REJECTED: Check satellite hardware link");
-      } else {
-        setCommError("COMM_FAILURE: Check Link Hardware");
-      }
+    } catch (e) {
+      setCommError("COMM_FAIL: Link initialization error");
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
     }
   };
 
-  const closeSessionInternal = () => {
-    if (sessionRef.current) { 
-      try { sessionRef.current.close(); } catch (e) {} 
-      sessionRef.current = null; 
-    }
+  const closeInternal = () => {
+    if (sessionRef.current) { try { sessionRef.current.close(); } catch(e){} sessionRef.current = null; }
     setAppState(AppState.IDLE);
-    if (sourcesRef.current) {
-      sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
-      sourcesRef.current.clear();
-    }
+    sourcesRef.current.forEach(s => { try { s.stop(); } catch(e){} });
+    sourcesRef.current.clear();
     nextStartTimeRef.current = 0;
-    isWrappingUpRef.current = false;
-    setDisplayBullets([]);
-    setDisplayTopic("");
+    isClosingRef.current = false;
   };
 
   const handleStopTalk = () => {
     if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
-      isWrappingUpRef.current = true;
-      setTimeout(() => {
-        if (isWrappingUpRef.current) closeSessionInternal();
-      }, 5000);
+      isClosingRef.current = true;
+      // Send sign-off to AI to trigger the SESSION SUMMARY tool call
+      sessionRef.current.sendRealtimeInput({ 
+        text: "Wally is signing off. Please provide a final SESSION SUMMARY of our discussion for the flight log." 
+      });
+      // Safety timeout in case AI fails to call tool
+      setTimeout(() => { if (isClosingRef.current) closeInternal(); }, 6000);
     } else {
-      closeSessionInternal();
+      closeInternal();
     }
-  };
-
-  const toggleLog = () => {
-    if (appState === AppState.LISTENING || appState === AppState.RESPONDING) {
-      handleStopTalk();
-    }
-    setAppState(prev => prev === AppState.LOG_VIEW ? AppState.IDLE : AppState.LOG_VIEW);
   };
 
   return (
@@ -220,31 +173,25 @@ const App: React.FC = () => {
       <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} error={commError} />
 
       {appState !== AppState.LOG_VIEW && (
-        <main className="z-10 w-full h-full flex flex-col p-6 pt-10 pb-4">
+        <main className="z-10 w-full h-full flex flex-col p-6 pt-10">
           <header className="mb-4">
-            <h1 className="text-3xl font-bold tracking-tighter cockpit-glow uppercase text-[#00ff41]">Wally's Wingman</h1>
-            <p className="text-[10px] opacity-60 tracking-[0.3em] font-bold mt-1 uppercase">External Executive Function // LCK-STATION</p>
+            <h1 className="text-3xl font-black cockpit-glow text-[#00ff41]">WALLY'S WINGMAN</h1>
+            <p className="text-[10px] opacity-40 tracking-[0.4em] font-bold">LCK STATION // SATELLITE LINK ACTIVE</p>
           </header>
 
-          <div className="flex-1 flex flex-col justify-end items-center mb-6">
-            {isWrappingUpRef.current && (
-              <div className="bg-black/80 px-4 py-3 border-2 border-[#ffbf00] rounded-lg animate-pulse shadow-[0_0_30px_rgba(255,191,0,0.3)]">
-                <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Saving Session Data...</span>
-              </div>
-            )}
-            {commError && (
-              <div className="bg-red-900/40 px-4 py-3 border-2 border-red-500 rounded-lg shadow-[0_0_30px_rgba(239,68,68,0.3)] max-w-xs text-center">
-                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: {commError.includes("API_KEY") ? "Satellite Key Error" : "System Offline"}</span>
+          <div className="flex-1 flex flex-col justify-center items-center">
+            {isClosingRef.current && (
+              <div className="bg-black/90 p-4 border-2 border-[#ffbf00] rounded animate-pulse">
+                <span className="text-xs text-[#ffbf00] font-black tracking-widest uppercase">Writing Flight Log...</span>
               </div>
             )}
           </div>
 
-          <ActionButtons state={appState} onTalk={handleStartTalk} onStop={handleStopTalk} onLog={toggleLog} />
+          <ActionButtons state={appState} onTalk={handleStartTalk} onStop={handleStopTalk} onLog={() => setAppState(AppState.LOG_VIEW)} />
         </main>
       )}
 
       {appState === AppState.LOG_VIEW && <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />}
-      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle,transparent_40%,rgba(0,0,0,0.8)_100%)]"></div>
     </div>
   );
 };
