@@ -35,13 +35,27 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const checkAuth = async () => {
-      // Safe environment check
-      const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : undefined;
+      // Look for the API key in both process.env and standard browser-friendly locations
+      const apiKey = process.env.API_KEY || (window as any).process?.env?.API_KEY;
 
+      // If we have a hardcoded key in the environment, we're good
+      if (apiKey) {
+        setShowAuthRequired(false);
+        return;
+      }
+
+      // If we're in AI Studio, check for key selection
       if (window.aistudio) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey && !apiKey) setShowAuthRequired(true);
-      } else if (!apiKey) {
+        try {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          if (!hasKey) {
+            setShowAuthRequired(true);
+          }
+        } catch (e) {
+          setShowAuthRequired(true);
+        }
+      } else {
+        // If no hardcoded key and no AI Studio environment, we can't function
         setShowAuthRequired(true);
       }
     };
@@ -87,7 +101,6 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Attempt to get location context for the system instruction
       let locationContext = "";
       try {
         const pos = await new Promise<GeolocationPosition>((res, rej) => 
@@ -98,7 +111,7 @@ const App: React.FC = () => {
         console.log("GPS unavailable, using home address context only.");
       }
 
-      const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
+      const apiKey = process.env.API_KEY || (window as any).process?.env?.API_KEY || '';
       const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
@@ -123,7 +136,6 @@ const App: React.FC = () => {
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'update_flight_log') {
                   const args = fc.args as any;
-                  // If we are wrapping up OR the AI explicitly sends a summary
                   if (isWrappingUpRef.current || args.topic === "SESSION SUMMARY") {
                     setLogs(prev => [{
                       id: Date.now().toString(),
@@ -132,12 +144,10 @@ const App: React.FC = () => {
                       bullets: args.bullets || []
                     }, ...prev]);
                     
-                    // If this was the final wrap-up call, close after a delay
                     if (isWrappingUpRef.current) {
                       setTimeout(() => closeSessionInternal(), 2000);
                     }
                   } else {
-                    // Normal turn-by-turn update
                     setDisplayBullets(args.bullets || []);
                     setDisplayTopic(args.topic || "WINGMAN NOTE");
                   }
@@ -238,6 +248,16 @@ const App: React.FC = () => {
     setAppState(prev => prev === AppState.LOG_VIEW ? AppState.IDLE : AppState.LOG_VIEW);
   };
 
+  const handleAuthorize = async () => {
+    if (window.aistudio) {
+      await window.aistudio.openSelectKey();
+      setShowAuthRequired(false);
+    } else {
+      // If no aistudio, suggest the user check their Vercel variables
+      alert("Satellite connection failed. Please ensure your API Key is correctly configured in your deployment settings.");
+    }
+  };
+
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col items-center select-none font-mono">
       <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} />
@@ -255,7 +275,7 @@ const App: React.FC = () => {
                 <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Comm Link Offline</h2>
                 <p className="text-xs text-[#ffbf00]/70 mb-6 uppercase tracking-widest font-bold">Authorization required to establish satellite uplink.</p>
                 <button 
-                  onClick={() => window.aistudio?.openSelectKey().then(() => setShowAuthRequired(false))} 
+                  onClick={handleAuthorize} 
                   className="bg-[#ffbf00] text-black w-full py-5 rounded text-2xl font-black uppercase tracking-widest active:scale-95"
                 >
                   Authorize

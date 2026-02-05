@@ -5,9 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Wally's Wingman</title>
-    <!-- Shim process for browser environment to prevent ReferenceErrors -->
+    <!-- Shim process for browser environment safely -->
     <script>
-        window.process = { env: {} };
+        window.process = window.process || { env: {} };
+        window.process.env = window.process.env || {};
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
