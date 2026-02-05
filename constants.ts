@@ -6,9 +6,19 @@ import { Type, FunctionDeclaration } from '@google/genai';
  * These variables are populated from the Vercel/Environment configuration.
  * Hardcoded values here are only generic fallbacks for local development safety.
  */
-const userAddress = process.env.WALLY_ADDRESS || "Canal Winchester, OH";
-const medicalContext = process.env.WALLY_MEDICAL || "Alzheimer's and related conditions.";
-const faithContext = process.env.WALLY_FAITH || "Catholic faith and devotions.";
+const safeGetEnv = (key: string, fallback: string): string => {
+  try {
+    // Check for process.env in a way that doesn't throw if process is missing
+    const env = (window as any).process?.env || (typeof process !== 'undefined' ? process.env : {});
+    return env[key] || fallback;
+  } catch (e) {
+    return fallback;
+  }
+};
+
+const userAddress = safeGetEnv('WALLY_ADDRESS', "Canal Winchester, OH");
+const medicalContext = safeGetEnv('WALLY_MEDICAL', "Alzheimer's and related conditions.");
+const faithContext = safeGetEnv('WALLY_FAITH', "Catholic faith and devotions.");
 
 export const SYSTEM_INSTRUCTION = `
 YOUR IDENTITY: You are "Wally's Wingman," a specialized AI powered by advanced medical research and deep compassion. You serve as Wally's "External Executive Function."

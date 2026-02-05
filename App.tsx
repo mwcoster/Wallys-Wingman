@@ -35,10 +35,13 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const checkAuth = async () => {
+      // Safe environment check
+      const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : undefined;
+
       if (window.aistudio) {
         const hasKey = await window.aistudio.hasSelectedApiKey();
-        if (!hasKey && !process.env.API_KEY) setShowAuthRequired(true);
-      } else if (!process.env.API_KEY) {
+        if (!hasKey && !apiKey) setShowAuthRequired(true);
+      } else if (!apiKey) {
         setShowAuthRequired(true);
       }
     };
@@ -95,7 +98,8 @@ const App: React.FC = () => {
         console.log("GPS unavailable, using home address context only.");
       }
 
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
+      const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -219,9 +223,6 @@ const App: React.FC = () => {
   const handleStopTalk = () => {
     if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
       isWrappingUpRef.current = true;
-      // We don't send text here because sendRealtimeInput text isn't a standard part of the Live session,
-      // instead we just trigger the wrap up UI state and wait for the model to finish any current turn
-      // or we manually force-close if it hangs.
       setTimeout(() => {
         if (isWrappingUpRef.current) closeSessionInternal();
       }, 5000);
@@ -273,8 +274,6 @@ const App: React.FC = () => {
       )}
 
       {appState === AppState.LOG_VIEW && <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />}
-      
-      {/* HUD Vignette Overlay */}
       <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle,transparent_40%,rgba(0,0,0,0.8)_100%)]"></div>
     </div>
   );
