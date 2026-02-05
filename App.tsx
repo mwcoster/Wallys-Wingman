@@ -63,21 +63,11 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      let locationContext = "";
-      try {
-        const pos = await new Promise<GeolocationPosition>((res, rej) => 
-          navigator.geolocation.getCurrentPosition(res, rej, { timeout: 3000 })
-        );
-        locationContext = `\n[NOTE: Wally is currently at Lat: ${pos.coords.latitude}, Long: ${pos.coords.longitude}.]`;
-      } catch (e) {
-        console.log("GPS unavailable.");
-      }
+      // Strict requirement: API key must come from process.env.API_KEY
+      const apiKey = process.env.API_KEY;
 
-      // Use the API key directly from process.env
-      const apiKey = process.env.API_KEY || '';
-      
       if (!apiKey) {
-        setCommError("API KEY MISSING");
+        setCommError("SAT_LINK_OFFLINE: API_KEY missing in platform settings.");
         setAppState(AppState.IDLE);
         isConnectingRef.current = false;
         return;
@@ -162,14 +152,14 @@ const App: React.FC = () => {
             setAppState(AppState.IDLE);
           },
           onerror: (e: any) => {
-            console.error("Live Session Error:", e);
-            setCommError("LINK ERROR: " + (e.message || "403"));
+            console.error("Link Error:", e);
+            setCommError("COMM_ERROR: Check Satellite Link Configuration");
             sessionRef.current = null;
             setAppState(AppState.IDLE);
           }
         },
         config: {
-          systemInstruction: SYSTEM_INSTRUCTION + locationContext,
+          systemInstruction: SYSTEM_INSTRUCTION,
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } }
@@ -178,7 +168,7 @@ const App: React.FC = () => {
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
       console.error("Connection Failed:", err);
-      setCommError("COMM FAILURE");
+      setCommError("COMM_FAILURE: Verification Required");
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -202,7 +192,6 @@ const App: React.FC = () => {
   const handleStopTalk = () => {
     if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
       isWrappingUpRef.current = true;
-      // Final tool call usually happens right before or after this
       setTimeout(() => {
         if (isWrappingUpRef.current) closeSessionInternal();
       }, 5000);
@@ -233,6 +222,11 @@ const App: React.FC = () => {
             {isWrappingUpRef.current && (
               <div className="bg-black/80 px-4 py-3 border-2 border-[#ffbf00] rounded-lg animate-pulse shadow-[0_0_30px_rgba(255,191,0,0.3)]">
                 <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Saving Session Data...</span>
+              </div>
+            )}
+            {commError && (
+              <div className="bg-red-900/40 px-4 py-3 border-2 border-red-500 rounded-lg shadow-[0_0_30px_rgba(239,68,68,0.3)] max-w-xs text-center">
+                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">{commError}</span>
               </div>
             )}
           </div>

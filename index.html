@@ -5,9 +5,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Wally's Wingman</title>
-    <!-- Shim process for browser environment safely -->
+    <!-- Ensure process.env exists in the browser to satisfy SDK requirements -->
     <script>
-        window.process = window.process || { env: {} };
+        window.process = window.process || {};
         window.process.env = window.process.env || {};
     </script>
     <script src="https://cdn.tailwindcss.com"></script>
