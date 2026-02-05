@@ -49,11 +49,36 @@ const App: React.FC = () => {
     };
   };
 
+  /**
+   * Robust Pre-Flight Check for API Key
+   */
+  const getValidatedKey = (): string | null => {
+    try {
+      const rawKey = process.env.API_KEY;
+      if (!rawKey) return null;
+      const cleanKey = String(rawKey).trim();
+      // Handle literal strings "undefined" or "null" injected by some bundlers
+      if (cleanKey === "undefined" || cleanKey === "null" || cleanKey === "") return null;
+      return cleanKey;
+    } catch (e) {
+      return null;
+    }
+  };
+
   const handleStartTalk = async () => {
     if (isConnectingRef.current || sessionRef.current) return;
     
+    setCommError(null);
+    const apiKey = getValidatedKey();
+
+    if (!apiKey) {
+      console.error("WINGMAN ERROR: Satellite Link Key Missing.");
+      setCommError("API_KEY_MISSING: Verification Required");
+      setAppState(AppState.IDLE);
+      return;
+    }
+
     try {
-      setCommError(null);
       isConnectingRef.current = true;
       initAudio();
       setAppState(AppState.LISTENING);
@@ -63,9 +88,7 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Initializing AI directly with process.env.API_KEY as per guidelines.
-      // Do not manually check if apiKey is null here, as it may be injected at build-time.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const ai = new GoogleGenAI({ apiKey });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
@@ -152,7 +175,6 @@ const App: React.FC = () => {
         },
         config: {
           systemInstruction: SYSTEM_INSTRUCTION,
-          // Fixed typo in the config object: responseModalities
           responseModalities: [Modality.AUDIO],
           tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } }
@@ -160,8 +182,8 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
-      console.error("Connection Failed:", err);
-      setCommError("COMM_FAILURE: Verification Required");
+      console.error("Wingman Connection Failed:", err);
+      setCommError("COMM_FAILURE: Check Link Hardware");
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -221,7 +243,7 @@ const App: React.FC = () => {
             )}
             {commError && (
               <div className="bg-red-900/40 px-4 py-3 border-2 border-red-500 rounded-lg shadow-[0_0_30px_rgba(239,68,68,0.3)] max-w-xs text-center">
-                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: Please Check System Logs</span>
+                <span className="text-[10px] text-red-400 font-black uppercase tracking-widest">Link Lost: {commError.includes("API_KEY") ? "Satellite Key Missing" : "System Offline"}</span>
               </div>
             )}
           </div>

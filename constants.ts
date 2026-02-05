@@ -4,13 +4,12 @@ import { Type, FunctionDeclaration } from '@google/genai';
 /**
  * ENVIRONMENT CONFIGURATION
  * These variables are provided by the Vercel/Build environment.
- * PII and specific user data are no longer hardcoded here for privacy.
  */
 const getEnv = (key: string, fallback: string): string => {
   try {
-    // Standard process.env access
-    // @ts-ignore
-    return (process.env && process.env[key]) ? process.env[key] : fallback;
+    // Standard process.env access - Assume global availability as per instructions
+    const val = (process.env as any)[key];
+    return val || fallback;
   } catch (e) {
     return fallback;
   }
