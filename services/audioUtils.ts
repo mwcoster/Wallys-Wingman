@@ -1,5 +1,10 @@
 
-export function decode(base64: string) {
+/**
+ * AUDIO UTILITIES FOR PCM STREAMING
+ * Handles base64 conversion and 16-bit PCM to 32-bit Float decoding.
+ */
+
+export function decode(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const len = binaryString.length;
   const bytes = new Uint8Array(len);
@@ -9,7 +14,7 @@ export function decode(base64: string) {
   return bytes;
 }
 
-export function encode(bytes: Uint8Array) {
+export function encode(bytes: Uint8Array): string {
   let binary = '';
   const len = bytes.byteLength;
   for (let i = 0; i < len; i++) {
@@ -31,6 +36,7 @@ export async function decodeAudioData(
   for (let channel = 0; channel < numChannels; channel++) {
     const channelData = buffer.getChannelData(channel);
     for (let i = 0; i < frameCount; i++) {
+      // Direct division is faster than map for large buffers
       channelData[i] = dataInt16[i * numChannels + channel] / 32768.0;
     }
   }

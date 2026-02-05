@@ -24,12 +24,10 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
                 src="https://raw.githubusercontent.com/google/genai-toolbox/main/examples/assets/lck_runway.png" 
                 alt="LCK Runway"
                 className="w-full h-full object-cover opacity-30"
-                style={{ filter: 'sepia(100%) hue-rotate(85deg) saturate(900%) brightness(0.5)' }}
+                style={{ filter: 'sepia(100%) hue-rotate(85deg) saturate(900%) brightness(0.6)' }}
               />
             </div>
 
-            <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'linear-gradient(#00ff41 1px, transparent 1px), linear-gradient(90deg, #00ff41 1px, transparent 1px)', backgroundSize: '80px 80px' }}></div>
-            
             <div className="absolute inset-0 opacity-20">
               <svg viewBox="0 0 1000 1000" className="w-full h-full">
                 <g stroke="#00ff41" fill="none" strokeWidth="1.5" opacity="0.4">
@@ -47,11 +45,13 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
           {state === AppState.IDLE && !showBullets && (
             <div className="absolute z-20 flex flex-col items-center text-center">
               {error ? (
-                <div className="text-2xl font-black text-red-500 uppercase animate-pulse">SYSTEM ERROR: {error}</div>
+                <div className="px-6 py-4 border-2 border-red-500 bg-black/80 rounded">
+                  <div className="text-xl font-black text-red-500 uppercase animate-pulse">{error}</div>
+                </div>
               ) : (
                 <>
-                  <div className="text-4xl font-black text-[#ffbf00]/40 uppercase amber-glow tracking-widest">Standing By</div>
-                  <div className="text-[10px] text-[#00ff41]/30 font-bold mt-4 tracking-[0.6em]">LCK FREQUENCY SECURE</div>
+                  <div className="text-4xl font-black text-[#ffbf00]/50 uppercase amber-glow tracking-widest">Standing By</div>
+                  <div className="text-[10px] text-[#00ff41]/40 font-bold mt-4 tracking-[0.6em]">LCK FREQUENCY SECURE</div>
                 </>
               )}
             </div>
@@ -61,9 +61,9 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
 
       <div className="absolute inset-0 z-30 flex items-center justify-center p-8 pointer-events-none">
         {showBullets && (
-          <div className="w-full max-w-lg bg-black/90 p-8 rounded border-4 border-[#00ff41] shadow-[0_0_100px_rgba(0,255,65,0.3)] animate-in fade-in zoom-in duration-500">
-            <div className="mb-6 border-b-2 border-[#00ff41]/20 pb-2">
-              <span className="text-xs font-black text-[#00ff41] uppercase tracking-[0.5em]">{topic || 'HUD_BRIEF'}</span>
+          <div className="w-full max-w-lg bg-black/95 p-8 rounded border-4 border-[#00ff41] shadow-[0_0_100px_rgba(0,255,65,0.4)] animate-in fade-in zoom-in duration-500">
+            <div className="mb-6 border-b-2 border-[#00ff41]/30 pb-2">
+              <span className="text-xs font-black text-[#00ff41] uppercase tracking-[0.5em]">{topic || 'HUD BRIEF'}</span>
             </div>
             <ul className="space-y-6">
               {bullets.map((b, i) => (
