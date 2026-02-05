@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { RadarDashboard } from './components/RadarDashboard';
@@ -31,6 +32,21 @@ const App: React.FC = () => {
   const sessionRef = useRef<any>(null);
   const isConnectingRef = useRef(false);
   const isWrappingUpRef = useRef(false);
+
+  // Proactive check for API key presence
+  useEffect(() => {
+    const checkAuth = async () => {
+      if (window.aistudio) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        if (!hasKey && !process.env.API_KEY) {
+          setShowAuthRequired(true);
+        }
+      } else if (!process.env.API_KEY) {
+        setShowAuthRequired(true);
+      }
+    };
+    checkAuth();
+  }, []);
 
   const initAudio = () => {
     if (!audioContextsRef.current) {
@@ -143,7 +159,9 @@ const App: React.FC = () => {
             setAppState(AppState.IDLE);
           },
           onerror: (e: any) => {
-            if (e.message?.includes("403") || e.message?.includes("entity")) setShowAuthRequired(true);
+            if (e.message?.includes("403") || e.message?.includes("entity") || e.message?.includes("API_KEY_INVALID")) {
+              setShowAuthRequired(true);
+            }
             sessionRef.current = null;
             setAppState(AppState.IDLE);
           }
@@ -157,7 +175,9 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
-      if (err.message?.includes("403") || err.message?.includes("entity")) setShowAuthRequired(true);
+      if (err.message?.includes("403") || err.message?.includes("entity") || err.message?.includes("API_KEY_INVALID")) {
+        setShowAuthRequired(true);
+      }
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -213,6 +233,7 @@ const App: React.FC = () => {
             {showAuthRequired && (
               <div className="text-center bg-black/95 p-8 rounded-lg border-2 border-[#ffbf00] shadow-[0_0_50px_rgba(255,191,0,0.3)] max-w-sm">
                 <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Comm Link Offline</h2>
+                <p className="text-xs text-[#ffbf00]/70 mb-6 uppercase tracking-widest font-bold">Authorization required to establish satellite uplink.</p>
                 <button onClick={() => window.aistudio?.openSelectKey().then(() => setShowAuthRequired(false))} className="bg-[#ffbf00] text-black w-full py-5 rounded text-2xl font-black uppercase tracking-widest active:scale-95">Authorize</button>
               </div>
             )}
