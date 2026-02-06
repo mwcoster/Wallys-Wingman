@@ -1,16 +1,19 @@
-
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  define: {
-    /**
-     * This mapping ensures that the SDK's internal reference to process.env.API_KEY
-     * is replaced with Vite's client-side environment variable at build time.
-     * On Vercel, ensure you set an environment variable named VITE_API_KEY.
-     */
-    'process.env.API_KEY': 'import.meta.env.VITE_API_KEY',
-  },
+export default defineConfig(({ mode }) => {
+  // 1. Load env variables based on the mode (development/production)
+  // This grabs VITE_API_KEY from Vercel's system or your local .env file
+  const env = loadEnv(mode, process.cwd(), '');
+
+  return {
+    plugins: [react()],
+    // 2. The Magic Switch
+    // This physically replaces "process.env.API_KEY" in your App.tsx
+    // with the actual value of VITE_API_KEY during the build.
+    define: {
+      'process.env.API_KEY': JSON.stringify(env.VITE_API_KEY),
+    },
+  };
 });
