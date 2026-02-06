@@ -1,4 +1,3 @@
-
 import React, { useState, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { RadarDashboard } from './components/RadarDashboard';
@@ -24,10 +23,13 @@ const App: React.FC = () => {
   const isClosingRef = useRef(false);
   const isConnectingRef = useRef(false);
 
+  // --- RECONNECT LOGIC ---
+  const reconnectCountRef = useRef(0);
+  const MAX_RECONNECT_ATTEMPTS = 5;
+
   const handleOpenKeySelection = async () => {
     setCommError(null);
     const studio = (window as any).aistudio;
-    
     if (studio && studio.openSelectKey) {
       try {
         await studio.openSelectKey();
@@ -69,6 +71,12 @@ const App: React.FC = () => {
   const handleStartTalk = async () => {
     if (sessionRef.current || isConnectingRef.current) return;
     
+    // Stop if we've tried too many times without success
+    if (reconnectCountRef.current >= MAX_RECONNECT_ATTEMPTS) {
+      setCommError("MAX_RETRIES: Link unstable. Please refresh the browser.");
+      return;
+    }
+
     setCommError(null);
     isConnectingRef.current = true;
 
@@ -81,14 +89,17 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Directly use process.env.API_KEY as per guidelines. 
-      // Vite will replace this with import.meta.env.VITE_API_KEY during build.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // Vite environment variable fix
+      const apiKey = import.meta.env.VITE_API_KEY;
+      if (!apiKey) throw new Error("API_KEY_MISSING");
+
+      const ai = new GoogleGenAI({ apiKey: apiKey });
       
       const sessionPromise = ai.live.connect({
         model: 'gemini-2.5-flash-native-audio-preview-12-2025',
         callbacks: {
           onopen: () => {
+            reconnectCountRef.current = 0; // Reset counter on successful link
             const { input } = audioContextsRef.current!;
             const source = input.createMediaStreamSource(stream);
             const scriptProcessor = input.createScriptProcessor(4096, 1, 1);
@@ -103,6 +114,7 @@ const App: React.FC = () => {
             scriptProcessor.connect(input.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
+            // --- HANDLE TOOL CALLS ---
             if (message.toolCall) {
               for (const fc of message.toolCall.functionCalls) {
                 if (fc.name === 'update_flight_log') {
@@ -131,6 +143,7 @@ const App: React.FC = () => {
               }
             }
 
+            // --- HANDLE AUDIO RESPONSE ---
             const base64Audio = message.serverContent?.modelTurn?.parts?.find(p => p.inlineData)?.inlineData?.data;
             if (base64Audio && audioContextsRef.current && outputNodeRef.current) {
               setAppState(AppState.RESPONDING);
@@ -149,6 +162,7 @@ const App: React.FC = () => {
               sourcesRef.current.add(source);
             }
 
+            // --- HANDLE INTERRUPTIONS ---
             if (message.serverContent?.interrupted) {
               sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
               sourcesRef.current.clear();
@@ -159,13 +173,10 @@ const App: React.FC = () => {
           onclose: () => closeSessionInternal(),
           onerror: (e: any) => {
             console.error("Link Failure:", e);
-            const errMsg = e?.message?.toLowerCase() || "";
-            if (errMsg.includes("unauthorized") || errMsg.includes("api_key_invalid") || errMsg.includes("not found")) {
-              setNeedsKey(true);
-              setCommError("AUTH_REJECTED: Please link a valid satellite project.");
-            } else {
-              setCommError("LINK_LOSS: Check hardware or internet connection.");
-            }
+            reconnectCountRef.current++;
+            const delay = Math.pow(2, reconnectCountRef.current) * 1000;
+            setCommError(`LINK_LOSS: Re-establishing frequency in ${delay/1000}s...`);
+            setTimeout(() => handleStartTalk(), delay);
             closeSessionInternal();
           }
         },
@@ -178,8 +189,9 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err: any) {
+      isConnectingRef.current = false;
       const errMsg = err?.message?.toLowerCase() || "";
-      if (errMsg.includes("key") || errMsg.includes("unauthorized") || errMsg.includes("not found")) {
+      if (errMsg.includes("key") || errMsg.includes("unauthorized")) {
         setNeedsKey(true);
         setCommError("AUTH_REQUIRED: Satellite uplink not authorized.");
       } else {
@@ -243,7 +255,6 @@ const App: React.FC = () => {
         <div className="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 text-center">
           <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_80px_rgba(255,191,0,0.4)]">
             <h2 className="text-3xl font-black text-[#ffbf00] mb-6 uppercase tracking-tighter amber-glow">Auth Link Required</h2>
-            
             <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase font-bold">
               Wally, the satellite link needs authorization to access the medical flight systems.
             </p>
@@ -260,15 +271,6 @@ const App: React.FC = () => {
             >
               Link Satellite
             </button>
-
-            <a 
-              href="https://ai.google.dev/gemini-api/docs/billing" 
-              target="_blank" 
-              className="text-[10px] text-[#ffbf00]/40 underline uppercase block mb-2"
-            >
-              Uplink Billing Documentation
-            </a>
-            
             <button 
               onClick={() => { setNeedsKey(false); setCommError(null); }}
               className="text-[10px] text-white/40 uppercase mt-4 hover:text-white"
