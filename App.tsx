@@ -22,32 +22,48 @@ const App: React.FC = () => {
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const sessionRef = useRef<any>(null);
   const isClosingRef = useRef(false);
+  const isConnectingRef = useRef(false);
 
-  // Check for API Key on mount
+  // Check for API Key or Studio availability on mount
   useEffect(() => {
     const checkKeyStatus = async () => {
-      // Literal check for process.env.API_KEY
-      const hasKey = !!process.env.API_KEY && process.env.API_KEY !== "undefined";
-      if (!hasKey) {
-        try {
-          const selected = await (window as any).aistudio.hasSelectedApiKey();
-          if (!selected) setNeedsKey(true);
-        } catch (e) {
+      const apiKey = process.env.API_KEY;
+      const hasDirectKey = !!apiKey && apiKey !== "undefined" && apiKey.length > 5;
+      
+      if (!hasDirectKey) {
+        // If we're in the Studio environment, check if a key is selected
+        if ((window as any).aistudio) {
+          try {
+            const selected = await (window as any).aistudio.hasSelectedApiKey();
+            if (!selected) setNeedsKey(true);
+          } catch (e) {
+            setNeedsKey(true);
+          }
+        } else {
+          // Outside of Studio, we need process.env.API_KEY
           setNeedsKey(true);
         }
+      } else {
+        setNeedsKey(false);
       }
     };
     checkKeyStatus();
   }, []);
 
   const handleOpenKeySelection = async () => {
-    try {
-      await (window as any).aistudio.openSelectKey();
-      // Per rules: Assume success after triggering the dialog
-      setNeedsKey(false);
-      setCommError(null);
-    } catch (e) {
-      console.error("Key selection failed:", e);
+    const studio = (window as any).aistudio;
+    if (studio && studio.openSelectKey) {
+      try {
+        await studio.openSelectKey();
+        // Assume success after triggering the dialog as per instructions
+        setNeedsKey(false);
+        setCommError(null);
+      } catch (e) {
+        setCommError("SAT_LINK_ERROR: Failed to open selector.");
+      }
+    } else {
+      // If we are on Vercel/Standard Web, the Studio selector isn't available
+      setCommError("SAT_LINK_OFFLINE: Please configure your API_KEY in project settings.");
     }
   };
 
@@ -61,9 +77,9 @@ const App: React.FC = () => {
       audioContextsRef.current = { input, output };
       outputNodeRef.current = gain;
     }
-    [audioContextsRef.current.input, audioContextsRef.current.output].forEach(ctx => {
-      if (ctx.state === 'suspended') ctx.resume();
-    });
+    const { input, output } = audioContextsRef.current;
+    if (input.state === 'suspended') input.resume();
+    if (output.state === 'suspended') output.resume();
   };
 
   const createBlob = (data: Float32Array) => {
@@ -78,8 +94,10 @@ const App: React.FC = () => {
   };
 
   const handleStartTalk = async () => {
-    if (sessionRef.current || needsKey) return;
+    if (sessionRef.current || needsKey || isConnectingRef.current) return;
+    
     setCommError(null);
+    isConnectingRef.current = true;
 
     try {
       initAudio();
@@ -90,7 +108,7 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // CRITICAL: Create instance right before use to capture up-to-date process.env.API_KEY
+      // Initialize with the latest process.env.API_KEY
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -103,7 +121,10 @@ const App: React.FC = () => {
             scriptProcessor.onaudioprocess = (e) => {
               if (isClosingRef.current) return;
               const pcmBlob = createBlob(e.inputBuffer.getChannelData(0));
-              sessionPromise.then(s => s.sendRealtimeInput({ media: pcmBlob })).catch(() => {});
+              // Use sessionPromise to ensure session is resolved and avoid stale closures
+              sessionPromise.then((session) => {
+                session.sendRealtimeInput({ media: pcmBlob });
+              });
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(input.destination);
@@ -127,9 +148,13 @@ const App: React.FC = () => {
                     setDisplayBullets(args.bullets || []);
                     setDisplayTopic(args.topic || "WINGMAN HUD");
                   }
-                  sessionPromise.then(s => s.sendToolResponse({
-                    functionResponses: { id: fc.id, name: fc.name, response: { result: "LOG_OK" } }
-                  })).catch(() => {});
+                  
+                  // Use sessionPromise to send tool response
+                  sessionPromise.then((session) => {
+                    session.sendToolResponse({
+                      functionResponses: { id: fc.id, name: fc.name, response: { result: "LOG_OK" } }
+                    });
+                  });
                 }
               }
             }
@@ -161,10 +186,10 @@ const App: React.FC = () => {
           },
           onclose: () => closeSessionInternal(),
           onerror: (e: any) => {
-            console.error("Link Loss Error:", e);
-            if (e?.message?.includes("entity was not found")) {
+            console.error("Session Link Failure:", e);
+            if (e?.message?.includes("API_KEY_INVALID") || e?.message?.includes("entity was not found")) {
               setNeedsKey(true);
-              setCommError("SAT_LINK_REJECTED: Please re-link satellite.");
+              setCommError("SAT_LINK_REJECTED: Unauthorized link.");
             } else {
               setCommError("LINK_LOSS: Check hardware connection.");
             }
@@ -180,9 +205,10 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      console.error("Connection initiation failed:", err);
-      setCommError("COMM_INIT_FAIL: Satellite link error.");
+      setCommError("COMM_INIT_FAIL: Connection setup error.");
       setAppState(AppState.IDLE);
+    } finally {
+      isConnectingRef.current = false;
     }
   };
 
@@ -196,13 +222,14 @@ const App: React.FC = () => {
     sourcesRef.current.clear();
     nextStartTimeRef.current = 0;
     isClosingRef.current = false;
+    isConnectingRef.current = false;
   };
 
   const handleStopTalk = () => {
     if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
       isClosingRef.current = true;
       sessionRef.current.sendRealtimeInput({ 
-        text: "I'm signing off now, Wingman. Please finalize our Flight Log with a SESSION SUMMARY of our conversation." 
+        text: "I'm signing off now, Wingman. Finalize the Flight Log with a summary." 
       });
       setTimeout(() => { if (isClosingRef.current) closeSessionInternal(); }, 7000);
     } else {
@@ -212,55 +239,45 @@ const App: React.FC = () => {
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col items-center select-none font-mono">
-      <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} error={commError} />
+      <RadarDashboard 
+        state={appState} 
+        bullets={displayBullets} 
+        topic={displayTopic} 
+        error={commError} 
+      />
+      
+      <ActionButtons 
+        state={appState}
+        onTalk={handleStartTalk}
+        onStop={handleStopTalk}
+        onLog={() => setAppState(AppState.LOG_VIEW)}
+      />
 
-      {appState !== AppState.LOG_VIEW && (
-        <main className="z-10 w-full h-full flex flex-col p-6 pt-10 pb-4">
-          <header className="mb-4">
-            <h1 className="text-3xl font-black cockpit-glow uppercase text-[#00ff41]">Wally's Wingman</h1>
-            <p className="text-[10px] opacity-60 tracking-[0.4em] font-bold mt-1 uppercase">LCK STATION // SATELLITE HUD</p>
-          </header>
-
-          <div className="flex-1 flex flex-col justify-end items-center mb-6">
-            {needsKey ? (
-              <div className="bg-black/90 p-8 border-4 border-red-500 rounded-xl shadow-[0_0_50px_rgba(239,68,68,0.4)] flex flex-col items-center text-center max-w-sm">
-                <span className="text-xl font-black text-red-500 uppercase tracking-widest mb-4">Satellite Link Offline</span>
-                <p className="text-xs text-white/70 mb-8 leading-relaxed">Wally, we need to link our project key to access the medical satellite data.</p>
-                <button 
-                  onClick={handleOpenKeySelection}
-                  className="btn-80s btn-80s-amber w-full h-16 rounded text-xl"
-                >
-                  Initiate Link
-                </button>
-                <a 
-                  href="https://ai.google.dev/gemini-api/docs/billing" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="mt-6 text-[10px] text-white/40 underline uppercase tracking-tighter"
-                >
-                  View Billing Documentation
-                </a>
-              </div>
-            ) : isClosingRef.current ? (
-              <div className="bg-black/90 px-6 py-4 border-2 border-[#ffbf00] rounded-lg animate-pulse shadow-[0_0_30px_rgba(255,191,0,0.4)]">
-                <span className="text-xs text-[#ffbf00] font-black uppercase tracking-widest">Compiling Log Summary...</span>
-              </div>
-            ) : null}
-          </div>
-
-          {!needsKey && (
-            <ActionButtons 
-              state={appState} 
-              onTalk={handleStartTalk} 
-              onStop={handleStopTalk} 
-              onLog={() => setAppState(AppState.LOG_VIEW)} 
-            />
-          )}
-        </main>
+      {appState === AppState.LOG_VIEW && (
+        <LogView 
+          logs={logs} 
+          onClose={() => setAppState(AppState.IDLE)} 
+        />
       )}
 
-      {appState === AppState.LOG_VIEW && <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />}
-      <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle,transparent_40%,rgba(0,0,0,0.8)_100%)]"></div>
+      {needsKey && (
+        <div className="absolute inset-0 z-[200] bg-black/90 flex items-center justify-center p-6 text-center">
+          <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_50px_rgba(255,191,0,0.3)]">
+            <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Authentication Required</h2>
+            <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase">
+              Wingman systems require a secure uplink. Please link a valid billing-enabled project key.
+              <br/><br/>
+              <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline font-bold">Billing Documentation</a>
+            </p>
+            <button 
+              onClick={handleOpenKeySelection}
+              className="w-full py-4 bg-[#ffbf00] text-black font-black uppercase tracking-widest hover:brightness-110 active:scale-95 transition-all"
+            >
+              Open Key Selector
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
