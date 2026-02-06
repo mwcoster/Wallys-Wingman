@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useRef } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { RadarDashboard } from './components/RadarDashboard';
 import { ActionButtons } from './components/ActionButtons';
@@ -24,35 +24,6 @@ const App: React.FC = () => {
   const isClosingRef = useRef(false);
   const isConnectingRef = useRef(false);
 
-  // Check for API Key or Studio availability on mount
-  useEffect(() => {
-    const checkKeyStatus = async () => {
-      // 1. Check if the platform has already performed the literal string replacement
-      const apiKey = process.env.API_KEY;
-      const hasDirectKey = !!apiKey && apiKey !== "undefined" && apiKey !== "" && !apiKey.includes("process.env");
-      
-      if (hasDirectKey) {
-        setNeedsKey(false);
-        return;
-      }
-
-      // 2. If no direct key, check if we are in the Studio environment
-      const studio = (window as any).aistudio;
-      if (studio) {
-        try {
-          const selected = await studio.hasSelectedApiKey();
-          setNeedsKey(!selected);
-        } catch (e) {
-          setNeedsKey(true);
-        }
-      } else {
-        // 3. If not in studio and no direct key, we definitely need a link
-        setNeedsKey(true);
-      }
-    };
-    checkKeyStatus();
-  }, []);
-
   const handleOpenKeySelection = async () => {
     setCommError(null);
     const studio = (window as any).aistudio;
@@ -60,14 +31,13 @@ const App: React.FC = () => {
     if (studio && studio.openSelectKey) {
       try {
         await studio.openSelectKey();
-        // Instructions state: Assume success after triggering the dialog
+        // Per guidelines: Assume success after triggering and let the user try again
         setNeedsKey(false);
       } catch (e) {
-        setCommError("SELECTOR_FAULT: Failed to open project link menu.");
+        setCommError("SELECTOR_FAULT: Failed to open project menu.");
       }
     } else {
-      // Diagnostic for Vercel/External users
-      setCommError("LINK_OFFLINE: This deployment requires an API_KEY in your Environment Variables.");
+      setCommError("LINK_OFFLINE: Please ensure API_KEY is set in your deployment environment.");
     }
   };
 
@@ -98,7 +68,7 @@ const App: React.FC = () => {
   };
 
   const handleStartTalk = async () => {
-    if (sessionRef.current || needsKey || isConnectingRef.current) return;
+    if (sessionRef.current || isConnectingRef.current) return;
     
     setCommError(null);
     isConnectingRef.current = true;
@@ -112,7 +82,7 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Use the literal process.env.API_KEY as required by SDK guidelines
+      // Directly use process.env.API_KEY as per guidelines
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -176,7 +146,7 @@ const App: React.FC = () => {
               };
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += audioBuffer.duration;
-              sourcesRef.current.add(source);
+              sourcesRef.add(source);
             }
 
             if (message.serverContent?.interrupted) {
@@ -189,11 +159,13 @@ const App: React.FC = () => {
           onclose: () => closeSessionInternal(),
           onerror: (e: any) => {
             console.error("Link Failure:", e);
-            if (e?.message?.includes("API_KEY_INVALID") || e?.message?.includes("entity was not found")) {
+            // Check for authentication errors
+            const errMsg = e?.message?.toLowerCase() || "";
+            if (errMsg.includes("unauthorized") || errMsg.includes("api_key_invalid") || errMsg.includes("not found")) {
               setNeedsKey(true);
-              setCommError("AUTH_DENIED: The linked project key is invalid or lacks billing.");
+              setCommError("AUTH_REJECTED: Please link a valid satellite project.");
             } else {
-              setCommError("LINK_LOSS: Check hardware or satellite connection.");
+              setCommError("LINK_LOSS: Check hardware or internet connection.");
             }
             closeSessionInternal();
           }
@@ -206,8 +178,14 @@ const App: React.FC = () => {
         }
       });
       sessionRef.current = await sessionPromise;
-    } catch (err) {
-      setCommError("LINK_FAILURE: Could not establish satellite connection.");
+    } catch (err: any) {
+      const errMsg = err?.message?.toLowerCase() || "";
+      if (errMsg.includes("key") || errMsg.includes("unauthorized") || errMsg.includes("not found")) {
+        setNeedsKey(true);
+        setCommError("AUTH_REQUIRED: Satellite uplink not authorized.");
+      } else {
+        setCommError("LINK_FAILURE: Could not initiate frequency.");
+      }
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -248,14 +226,12 @@ const App: React.FC = () => {
         error={commError} 
       />
       
-      {!needsKey && (
-        <ActionButtons 
-          state={appState}
-          onTalk={handleStartTalk}
-          onStop={handleStopTalk}
-          onLog={() => setAppState(AppState.LOG_VIEW)}
-        />
-      )}
+      <ActionButtons 
+        state={appState}
+        onTalk={handleStartTalk}
+        onStop={handleStopTalk}
+        onLog={() => setAppState(AppState.LOG_VIEW)}
+      />
 
       {appState === AppState.LOG_VIEW && (
         <LogView 
@@ -264,13 +240,14 @@ const App: React.FC = () => {
         />
       )}
 
+      {/* This modal only appears if an authentication error actually occurs */}
       {needsKey && (
         <div className="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 text-center">
           <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_80px_rgba(255,191,0,0.4)]">
-            <h2 className="text-3xl font-black text-[#ffbf00] mb-6 uppercase tracking-tighter amber-glow">Pre-Flight Link</h2>
+            <h2 className="text-3xl font-black text-[#ffbf00] mb-6 uppercase tracking-tighter amber-glow">Auth Link Required</h2>
             
             <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase font-bold">
-              Wally, we need to authorize our satellite link to access the medical flight systems.
+              Wally, the satellite link needs authorization to access the medical flight systems.
             </p>
 
             {commError && (
@@ -283,7 +260,7 @@ const App: React.FC = () => {
               onClick={handleOpenKeySelection}
               className="w-full py-6 bg-[#ffbf00] text-black font-black uppercase tracking-widest hover:brightness-110 active:scale-95 transition-all shadow-[0_4px_0_#664d00] mb-6"
             >
-              Initiate Satellite Link
+              Link Satellite
             </button>
 
             <a 
@@ -294,7 +271,12 @@ const App: React.FC = () => {
               Uplink Billing Documentation
             </a>
             
-            <p className="text-[9px] text-white/20 uppercase tracking-[0.2em]">LCK STATION // AUTH REQUIRED</p>
+            <button 
+              onClick={() => { setNeedsKey(false); setCommError(null); }}
+              className="text-[10px] text-white/40 uppercase mt-4 hover:text-white"
+            >
+              Dismiss Alarm
+            </button>
           </div>
         </div>
       )}
