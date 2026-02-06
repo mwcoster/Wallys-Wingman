@@ -31,13 +31,12 @@ const App: React.FC = () => {
     if (studio && studio.openSelectKey) {
       try {
         await studio.openSelectKey();
-        // Per guidelines: Assume success after triggering and let the user try again
         setNeedsKey(false);
       } catch (e) {
         setCommError("SELECTOR_FAULT: Failed to open project menu.");
       }
     } else {
-      setCommError("LINK_OFFLINE: Please ensure API_KEY is set in your deployment environment.");
+      setCommError("LINK_OFFLINE: Please ensure VITE_API_KEY is set in your deployment environment.");
     }
   };
 
@@ -82,7 +81,8 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Directly use process.env.API_KEY as per guidelines
+      // Directly use process.env.API_KEY as per guidelines. 
+      // Vite will replace this with import.meta.env.VITE_API_KEY during build.
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -146,7 +146,7 @@ const App: React.FC = () => {
               };
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += audioBuffer.duration;
-              sourcesRef.add(source);
+              sourcesRef.current.add(source);
             }
 
             if (message.serverContent?.interrupted) {
@@ -159,7 +159,6 @@ const App: React.FC = () => {
           onclose: () => closeSessionInternal(),
           onerror: (e: any) => {
             console.error("Link Failure:", e);
-            // Check for authentication errors
             const errMsg = e?.message?.toLowerCase() || "";
             if (errMsg.includes("unauthorized") || errMsg.includes("api_key_invalid") || errMsg.includes("not found")) {
               setNeedsKey(true);
@@ -240,7 +239,6 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* This modal only appears if an authentication error actually occurs */}
       {needsKey && (
         <div className="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 text-center">
           <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_80px_rgba(255,191,0,0.4)]">
