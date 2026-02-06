@@ -27,43 +27,47 @@ const App: React.FC = () => {
   // Check for API Key or Studio availability on mount
   useEffect(() => {
     const checkKeyStatus = async () => {
+      // 1. Check if the platform has already performed the literal string replacement
       const apiKey = process.env.API_KEY;
-      const hasDirectKey = !!apiKey && apiKey !== "undefined" && apiKey.length > 5;
+      const hasDirectKey = !!apiKey && apiKey !== "undefined" && apiKey !== "" && !apiKey.includes("process.env");
       
-      if (!hasDirectKey) {
-        // If we're in the Studio environment, check if a key is selected
-        if ((window as any).aistudio) {
-          try {
-            const selected = await (window as any).aistudio.hasSelectedApiKey();
-            if (!selected) setNeedsKey(true);
-          } catch (e) {
-            setNeedsKey(true);
-          }
-        } else {
-          // Outside of Studio, we need process.env.API_KEY
+      if (hasDirectKey) {
+        setNeedsKey(false);
+        return;
+      }
+
+      // 2. If no direct key, check if we are in the Studio environment
+      const studio = (window as any).aistudio;
+      if (studio) {
+        try {
+          const selected = await studio.hasSelectedApiKey();
+          setNeedsKey(!selected);
+        } catch (e) {
           setNeedsKey(true);
         }
       } else {
-        setNeedsKey(false);
+        // 3. If not in studio and no direct key, we definitely need a link
+        setNeedsKey(true);
       }
     };
     checkKeyStatus();
   }, []);
 
   const handleOpenKeySelection = async () => {
+    setCommError(null);
     const studio = (window as any).aistudio;
+    
     if (studio && studio.openSelectKey) {
       try {
         await studio.openSelectKey();
-        // Assume success after triggering the dialog as per instructions
+        // Instructions state: Assume success after triggering the dialog
         setNeedsKey(false);
-        setCommError(null);
       } catch (e) {
-        setCommError("SAT_LINK_ERROR: Failed to open selector.");
+        setCommError("SELECTOR_FAULT: Failed to open project link menu.");
       }
     } else {
-      // If we are on Vercel/Standard Web, the Studio selector isn't available
-      setCommError("SAT_LINK_OFFLINE: Please configure your API_KEY in project settings.");
+      // Diagnostic for Vercel/External users
+      setCommError("LINK_OFFLINE: This deployment requires an API_KEY in your Environment Variables.");
     }
   };
 
@@ -108,7 +112,7 @@ const App: React.FC = () => {
       
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      // Initialize with the latest process.env.API_KEY
+      // Use the literal process.env.API_KEY as required by SDK guidelines
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const sessionPromise = ai.live.connect({
@@ -121,10 +125,9 @@ const App: React.FC = () => {
             scriptProcessor.onaudioprocess = (e) => {
               if (isClosingRef.current) return;
               const pcmBlob = createBlob(e.inputBuffer.getChannelData(0));
-              // Use sessionPromise to ensure session is resolved and avoid stale closures
               sessionPromise.then((session) => {
                 session.sendRealtimeInput({ media: pcmBlob });
-              });
+              }).catch(() => {});
             };
             source.connect(scriptProcessor);
             scriptProcessor.connect(input.destination);
@@ -149,12 +152,11 @@ const App: React.FC = () => {
                     setDisplayTopic(args.topic || "WINGMAN HUD");
                   }
                   
-                  // Use sessionPromise to send tool response
                   sessionPromise.then((session) => {
                     session.sendToolResponse({
                       functionResponses: { id: fc.id, name: fc.name, response: { result: "LOG_OK" } }
                     });
-                  });
+                  }).catch(() => {});
                 }
               }
             }
@@ -186,12 +188,12 @@ const App: React.FC = () => {
           },
           onclose: () => closeSessionInternal(),
           onerror: (e: any) => {
-            console.error("Session Link Failure:", e);
+            console.error("Link Failure:", e);
             if (e?.message?.includes("API_KEY_INVALID") || e?.message?.includes("entity was not found")) {
               setNeedsKey(true);
-              setCommError("SAT_LINK_REJECTED: Unauthorized link.");
+              setCommError("AUTH_DENIED: The linked project key is invalid or lacks billing.");
             } else {
-              setCommError("LINK_LOSS: Check hardware connection.");
+              setCommError("LINK_LOSS: Check hardware or satellite connection.");
             }
             closeSessionInternal();
           }
@@ -205,7 +207,7 @@ const App: React.FC = () => {
       });
       sessionRef.current = await sessionPromise;
     } catch (err) {
-      setCommError("COMM_INIT_FAIL: Connection setup error.");
+      setCommError("LINK_FAILURE: Could not establish satellite connection.");
       setAppState(AppState.IDLE);
     } finally {
       isConnectingRef.current = false;
@@ -246,12 +248,14 @@ const App: React.FC = () => {
         error={commError} 
       />
       
-      <ActionButtons 
-        state={appState}
-        onTalk={handleStartTalk}
-        onStop={handleStopTalk}
-        onLog={() => setAppState(AppState.LOG_VIEW)}
-      />
+      {!needsKey && (
+        <ActionButtons 
+          state={appState}
+          onTalk={handleStartTalk}
+          onStop={handleStopTalk}
+          onLog={() => setAppState(AppState.LOG_VIEW)}
+        />
+      )}
 
       {appState === AppState.LOG_VIEW && (
         <LogView 
@@ -261,20 +265,36 @@ const App: React.FC = () => {
       )}
 
       {needsKey && (
-        <div className="absolute inset-0 z-[200] bg-black/90 flex items-center justify-center p-6 text-center">
-          <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_50px_rgba(255,191,0,0.3)]">
-            <h2 className="text-2xl font-black text-[#ffbf00] mb-4 uppercase tracking-tighter">Authentication Required</h2>
-            <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase">
-              Wingman systems require a secure uplink. Please link a valid billing-enabled project key.
-              <br/><br/>
-              <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" className="underline font-bold">Billing Documentation</a>
+        <div className="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 text-center">
+          <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_80px_rgba(255,191,0,0.4)]">
+            <h2 className="text-3xl font-black text-[#ffbf00] mb-6 uppercase tracking-tighter amber-glow">Pre-Flight Link</h2>
+            
+            <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase font-bold">
+              Wally, we need to authorize our satellite link to access the medical flight systems.
             </p>
+
+            {commError && (
+              <div className="mb-8 p-4 border-2 border-red-500 bg-red-950/20 text-red-500 text-xs font-black uppercase tracking-widest animate-pulse">
+                ALARM: {commError}
+              </div>
+            )}
+
             <button 
               onClick={handleOpenKeySelection}
-              className="w-full py-4 bg-[#ffbf00] text-black font-black uppercase tracking-widest hover:brightness-110 active:scale-95 transition-all"
+              className="w-full py-6 bg-[#ffbf00] text-black font-black uppercase tracking-widest hover:brightness-110 active:scale-95 transition-all shadow-[0_4px_0_#664d00] mb-6"
             >
-              Open Key Selector
+              Initiate Satellite Link
             </button>
+
+            <a 
+              href="https://ai.google.dev/gemini-api/docs/billing" 
+              target="_blank" 
+              className="text-[10px] text-[#ffbf00]/40 underline uppercase block mb-2"
+            >
+              Uplink Billing Documentation
+            </a>
+            
+            <p className="text-[9px] text-white/20 uppercase tracking-[0.2em]">LCK STATION // AUTH REQUIRED</p>
           </div>
         </div>
       )}
