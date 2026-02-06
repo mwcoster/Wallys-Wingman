@@ -23,8 +23,8 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
               <img 
                 src="https://raw.githubusercontent.com/google/genai-toolbox/main/examples/assets/lck_runway.png" 
                 alt="LCK Runway"
-                className="w-full h-full object-cover opacity-30"
-                style={{ filter: 'sepia(100%) hue-rotate(85deg) saturate(900%) brightness(0.6)' }}
+                className="w-full h-full object-cover opacity-20"
+                style={{ filter: 'sepia(100%) hue-rotate(85deg) saturate(900%) brightness(0.5)' }}
               />
             </div>
 
@@ -50,8 +50,8 @@ export const RadarDashboard: React.FC<RadarDashboardProps> = ({ state, bullets, 
                 </div>
               ) : (
                 <>
-                  <div className="text-4xl font-black text-[#ffbf00]/50 uppercase amber-glow tracking-widest">Standing By</div>
-                  <div className="text-[10px] text-[#00ff41]/40 font-bold mt-4 tracking-[0.6em]">LCK FREQUENCY SECURE</div>
+                  <div className="text-4xl font-black text-[#ffbf00]/30 uppercase amber-glow tracking-widest">Standing By</div>
+                  <div className="text-[10px] text-[#00ff41]/30 font-bold mt-4 tracking-[0.6em]">LCK FREQUENCY SECURE</div>
                 </>
               )}
             </div>
