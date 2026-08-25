@@ -1,7 +1,7 @@
 {
-  "name": "wally's-wingman",
+  "name": "wallys-wingman",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,16 +9,16 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4.0.62",
+    "@ai-sdk/react": "^4.0.80",
+    "ai": "^7.0.77",
     "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "@google/genai": "1.39.0",
-    "@vitejs/plugin-react": "^5.1.3",
-    "vite": "^7.3.1"
+    "react-dom": "^19.2.4"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
+    "@vitejs/plugin-react": "^5.1.3",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^7.3.1"
   }
 }
