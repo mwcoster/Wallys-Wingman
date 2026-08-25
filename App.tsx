@@ -1,234 +1,186 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
+import React, { useEffect, useRef, useState } from 'react';
+import { experimental_useRealtime as useRealtime } from '@ai-sdk/react';
+import { gateway } from '@ai-sdk/gateway';
 import { RadarDashboard } from './components/RadarDashboard';
 import { ActionButtons } from './components/ActionButtons';
 import { LogView } from './components/LogView';
 import { AppState, LogEntry } from './types';
-import { SYSTEM_INSTRUCTION, UPDATE_LOG_FUNCTION } from './constants';
-import { decode, encode, decodeAudioData } from './services/audioUtils';
+import { SYSTEM_INSTRUCTION } from './constants';
+
+const realtimeModel = gateway.experimental_realtime('openai/gpt-realtime-mini');
+
+const messageText = (message: any) =>
+  (message?.parts || [])
+    .filter((part: any) => part?.type === 'text' && part?.text)
+    .map((part: any) => part.text)
+    .join(' ')
+    .trim();
 
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [displayBullets, setDisplayBullets] = useState<string[]>([]);
-  const [displayTopic, setDisplayTopic] = useState<string>("");
+  const [displayTopic, setDisplayTopic] = useState<string>('');
   const [commError, setCommError] = useState<string | null>(null);
-  const [needsKey, setNeedsKey] = useState<boolean>(false);
-  
-  const audioContextsRef = useRef<{ input: AudioContext; output: AudioContext } | null>(null);
-  const outputNodeRef = useRef<GainNode | null>(null);
-  const nextStartTimeRef = useRef(0);
-  const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const sessionRef = useRef<any>(null);
-  const heartbeatRef = useRef<any>(null);
-  const isClosingRef = useRef(false);
-  const isConnectingRef = useRef(false);
-  const reconnectCountRef = useRef(0);
-  const MAX_RECONNECT_ATTEMPTS = 5;
 
-  const handleOpenKeySelection = async () => {
-    setCommError(null);
-    const studio = (window as any).aistudio;
-    if (studio && studio.openSelectKey) {
-      try {
-        await studio.openSelectKey();
-        setNeedsKey(false);
-      } catch (e) {
-        setCommError("SELECTOR_FAULT: Failed to open project menu.");
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const captureStartedRef = useRef(false);
+  const connectingRef = useRef(false);
+
+  const realtime = useRealtime({
+    model: realtimeModel,
+    api: { token: '/api/realtime-token' },
+    sessionConfig: {
+      instructions: SYSTEM_INSTRUCTION,
+      inputAudioTranscription: {},
+      voice: 'alloy',
+      turnDetection: { type: 'server-vad' },
+    },
+  });
+
+  useEffect(() => {
+    if (realtime.status === 'connected') {
+      connectingRef.current = false;
+      setCommError(null);
+      setAppState(AppState.LISTENING);
+
+      if (micStreamRef.current && !captureStartedRef.current) {
+        try {
+          realtime.startAudioCapture(micStreamRef.current);
+          captureStartedRef.current = true;
+        } catch (error) {
+          console.error('Microphone capture failed', error);
+          setCommError('MIC_LINK_FAULT: Could not start microphone audio.');
+        }
       }
-    } else {
-      setCommError("LINK_OFFLINE: Please ensure VITE_API_KEY is set in your deployment environment.");
     }
-  };
 
-  const initAudio = () => {
-    if (!audioContextsRef.current) {
-      const AC = (window.AudioContext || (window as any).webkitAudioContext);
-      const input = new AC({ sampleRate: 16000 });
-      const output = new AC({ sampleRate: 24000 });
-      const gain = output.createGain();
-      gain.connect(output.destination);
-      audioContextsRef.current = { input, output };
-      outputNodeRef.current = gain;
+    if (realtime.status === 'disconnected' && !connectingRef.current) {
+      captureStartedRef.current = false;
+      if (appState !== AppState.LOG_VIEW) setAppState(AppState.IDLE);
     }
-    const { input, output } = audioContextsRef.current;
-    if (input.state === 'suspended') input.resume();
-    if (output.state === 'suspended') output.resume();
-  };
+  }, [realtime.status]);
 
-  const createBlob = (data: Float32Array) => {
-    const int16 = new Int16Array(data.length);
-    for (let i = 0; i < data.length; i++) {
-      int16[i] = data[i] * 32768;
+  useEffect(() => {
+    const messages = realtime.messages as any[];
+    const latestAssistant = [...messages]
+      .reverse()
+      .find((message: any) => message?.role === 'assistant' && messageText(message));
+
+    if (!latestAssistant) return;
+
+    const text = messageText(latestAssistant);
+    setDisplayTopic('WINGMAN COMMS');
+    setDisplayBullets([text.length > 180 ? `${text.slice(0, 177)}...` : text]);
+
+    if (realtime.status === 'connected') {
+      setAppState(AppState.RESPONDING);
+      const timer = window.setTimeout(() => {
+        if (realtime.status === 'connected') setAppState(AppState.LISTENING);
+      }, 1200);
+      return () => window.clearTimeout(timer);
     }
-    return {
-      data: encode(new Uint8Array(int16.buffer)),
-      mimeType: 'audio/pcm;rate=16000',
-    };
+  }, [realtime.messages, realtime.status]);
+
+  const stopMicrophone = () => {
+    if (captureStartedRef.current) {
+      try {
+        realtime.stopAudioCapture();
+      } catch (error) {
+        console.warn('Unable to stop capture cleanly', error);
+      }
+      captureStartedRef.current = false;
+    }
+
+    micStreamRef.current?.getTracks().forEach(track => track.stop());
+    micStreamRef.current = null;
   };
 
   const handleStartTalk = async () => {
-    if (sessionRef.current || isConnectingRef.current) return;
-    if (reconnectCountRef.current >= MAX_RECONNECT_ATTEMPTS) {
-      setCommError("MAX_RETRIES: Link unstable. Please refresh the browser.");
-      return;
-    }
+    if (connectingRef.current || realtime.status === 'connected') return;
 
     setCommError(null);
-    isConnectingRef.current = true;
+    setDisplayBullets([]);
+    setDisplayTopic('CONNECTING');
+    connectingRef.current = true;
 
     try {
-      initAudio();
-      setAppState(AppState.LISTENING);
-      isClosingRef.current = false;
-      setDisplayBullets([]);
-      setDisplayTopic("");
-      
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const apiKey = import.meta.env.VITE_API_KEY;
-      if (!apiKey) throw new Error("API_KEY_MISSING");
-
-      const ai = new GoogleGenAI({ apiKey: apiKey });
-      const sessionPromise = ai.live.connect({
-        model: 'gemini-2.5-flash-native-audio-preview-12-2025',
-        callbacks: {
-          onopen: () => {
-            reconnectCountRef.current = 0;
-            
-            // HEARTBEAT: Sends a tiny "ping" to Vercel every 10s to stop mid-speech cutoffs
-            heartbeatRef.current = setInterval(() => {
-              if (sessionRef.current && !isClosingRef.current) {
-                try { sessionRef.current.sendRealtimeInput({ text: " " }); } catch(e) {}
-              }
-            }, 10000);
-
-            const { input } = audioContextsRef.current!;
-            const source = input.createMediaStreamSource(stream);
-            const scriptProcessor = input.createScriptProcessor(4096, 1, 1);
-            
-            scriptProcessor.onaudioprocess = (e) => {
-              if (!sessionRef.current || isClosingRef.current) return;
-              const pcmBlob = createBlob(e.inputBuffer.getChannelData(0));
-              try {
-                sessionRef.current.sendRealtimeInput({ media: pcmBlob });
-              } catch (err) { /* Catching prevents the 586 error flood */ }
-            };
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(input.destination);
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            if (!sessionRef.current) return;
-
-            // Handle Tool Calls (Flight Log)
-            if (message.toolCall) {
-              for (const fc of message.toolCall.functionCalls) {
-                if (fc.name === 'update_flight_log') {
-                  const args = fc.args as any;
-                  const isFinal = isClosingRef.current || args.topic?.includes("SUMMARY");
-                  if (isFinal) {
-                    setLogs(prev => [{
-                      id: Date.now().toString(),
-                      timestamp: Date.now(),
-                      topic: args.topic || 'SESSION SUMMARY',
-                      bullets: args.bullets || []
-                    }, ...prev]);
-                  } else {
-                    setDisplayBullets(args.bullets || []);
-                    setDisplayTopic(args.topic || "WINGMAN HUD");
-                  }
-                  sessionRef.current?.sendToolResponse({
-                    functionResponses: { id: fc.id, name: fc.name, response: { result: "LOG_OK" } }
-                  });
-                }
-              }
-            }
-
-            // Handle Audio Playback
-            const base64Audio = message.serverContent?.modelTurn?.parts?.find(p => p.inlineData)?.inlineData?.data;
-            if (base64Audio && audioContextsRef.current && outputNodeRef.current) {
-              setAppState(AppState.RESPONDING);
-              const { output } = audioContextsRef.current;
-              nextStartTimeRef.current = Math.max(nextStartTimeRef.current, output.currentTime);
-              const audioBuffer = await decodeAudioData(decode(base64Audio), output, 24000, 1);
-              const source = output.createBufferSource();
-              source.buffer = audioBuffer;
-              source.connect(outputNodeRef.current);
-              source.onended = () => {
-                sourcesRef.current.delete(source);
-                if (sourcesRef.current.size === 0 && !isClosingRef.current && sessionRef.current) {
-                  setAppState(AppState.LISTENING);
-                }
-              };
-              source.start(nextStartTimeRef.current);
-              nextStartTimeRef.current += audioBuffer.duration;
-              sourcesRef.current.add(source);
-            }
-          },
-          onclose: (event: any) => {
-            console.log(`Link Closed. Code: ${event.code}`);
-            closeSessionInternal();
-            if (!isClosingRef.current) {
-              setCommError("RECONNECTING: Satellite link dropped.");
-              setTimeout(() => handleStartTalk(), 2000); // Silent Auto-Rejoin
-            }
-          },
-          onerror: (e: any) => {
-            closeSessionInternal();
-          }
-        },
-        config: {
-          systemInstruction: SYSTEM_INSTRUCTION,
-          responseModalities: [Modality.AUDIO],
-          tools: [{ functionDeclarations: [UPDATE_LOG_FUNCTION] }],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } }
-        }
-      });
-      sessionRef.current = await sessionPromise;
-    } catch (err: any) {
+      micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      await realtime.connect();
+    } catch (error: any) {
+      console.error('Wingman connection failed', error);
+      connectingRef.current = false;
+      stopMicrophone();
       setAppState(AppState.IDLE);
-    } finally {
-      isConnectingRef.current = false;
+      setDisplayTopic('');
+      setCommError(
+        `LINK_OFFLINE: ${error?.message || 'Could not connect to the Wingman service.'}`,
+      );
     }
   };
 
-  const closeSessionInternal = () => {
-    if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-    if (sessionRef.current) { 
-      try { sessionRef.current.close(); } catch(e) {} 
-      sessionRef.current = null; 
+  const saveFlightLog = () => {
+    const transcript = (realtime.messages as any[])
+      .map((message: any) => ({ role: message?.role, text: messageText(message) }))
+      .filter(item => item.text)
+      .slice(-4)
+      .map(item => `${item.role === 'assistant' ? 'Wingman' : 'Wally'}: ${item.text}`)
+      .map(text => (text.length > 110 ? `${text.slice(0, 107)}...` : text));
+
+    if (transcript.length) {
+      setLogs(prev => [
+        {
+          id: Date.now().toString(),
+          timestamp: Date.now(),
+          topic: 'SESSION SUMMARY',
+          bullets: transcript,
+        },
+        ...prev,
+      ]);
     }
-    setAppState(AppState.IDLE);
-    sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
-    sourcesRef.current.clear();
-    nextStartTimeRef.current = 0;
-    isClosingRef.current = false;
-    isConnectingRef.current = false;
   };
 
   const handleStopTalk = () => {
-    if (sessionRef.current && (appState === AppState.LISTENING || appState === AppState.RESPONDING)) {
-      isClosingRef.current = true;
-      sessionRef.current.sendRealtimeInput({ text: "I'm signing off now, Wingman. Finalize the Flight Log." });
-      setTimeout(() => { if (isClosingRef.current) closeSessionInternal(); }, 7000);
-    } else {
-      closeSessionInternal();
+    saveFlightLog();
+    stopMicrophone();
+    try {
+      realtime.disconnect();
+    } catch (error) {
+      console.warn('Wingman disconnect warning', error);
     }
+    connectingRef.current = false;
+    setDisplayTopic('');
+    setDisplayBullets([]);
+    setAppState(AppState.IDLE);
   };
+
+  useEffect(() => {
+    return () => {
+      stopMicrophone();
+      try {
+        realtime.disconnect();
+      } catch {
+        // Component is leaving; nothing else to clean up.
+      }
+    };
+  }, []);
 
   return (
     <div className="relative w-full h-screen bg-black overflow-hidden flex flex-col items-center select-none font-mono">
-      <RadarDashboard state={appState} bullets={displayBullets} topic={displayTopic} error={commError} />
-      <ActionButtons state={appState} onTalk={handleStartTalk} onStop={handleStopTalk} onLog={() => setAppState(AppState.LOG_VIEW)} />
-      {appState === AppState.LOG_VIEW && <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />}
-      {needsKey && (
-        <div className="absolute inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 text-center">
-          <div className="max-w-sm p-8 border-4 border-[#ffbf00] bg-black shadow-[0_0_80px_rgba(255,191,0,0.4)]">
-            <h2 className="text-3xl font-black text-[#ffbf00] mb-6 uppercase tracking-tighter">Auth Link Required</h2>
-            <p className="text-[#ffbf00]/70 mb-8 text-sm leading-relaxed uppercase font-bold">Wally, the satellite link needs authorization to access the flight systems.</p>
-            <button onClick={handleOpenKeySelection} className="w-full py-6 bg-[#ffbf00] text-black font-black uppercase tracking-widest hover:brightness-110 mb-6">Link Satellite</button>
-            <button onClick={() => { setNeedsKey(false); setCommError(null); }} className="text-[10px] text-white/40 uppercase hover:text-white">Dismiss Alarm</button>
-          </div>
-        </div>
+      <RadarDashboard
+        state={appState}
+        bullets={displayBullets}
+        topic={displayTopic}
+        error={commError}
+      />
+      <ActionButtons
+        state={appState}
+        onTalk={handleStartTalk}
+        onStop={handleStopTalk}
+        onLog={() => setAppState(AppState.LOG_VIEW)}
+      />
+      {appState === AppState.LOG_VIEW && (
+        <LogView logs={logs} onClose={() => setAppState(AppState.IDLE)} />
       )}
     </div>
   );
