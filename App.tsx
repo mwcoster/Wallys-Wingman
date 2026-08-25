@@ -42,6 +42,7 @@ const App: React.FC = () => {
     if (realtime.status === 'connected') {
       connectingRef.current = false;
       setCommError(null);
+      setDisplayTopic('LINK SECURE');
       setAppState(AppState.LISTENING);
 
       if (micStreamRef.current && !captureStartedRef.current) {
@@ -96,26 +97,59 @@ const App: React.FC = () => {
     micStreamRef.current = null;
   };
 
+  const checkRealtimeTokenRoute = async () => {
+    const response = await fetch('/api/realtime-token', {
+      method: 'POST',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+    });
+
+    const raw = await response.text();
+    let body: any = null;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      const detail = body?.detail || body?.error || raw || `HTTP ${response.status}`;
+      throw new Error(`TOKEN ROUTE ${response.status}: ${detail}`);
+    }
+
+    if (!body?.token || !body?.url) {
+      throw new Error('TOKEN ROUTE: Server responded, but no realtime token was returned.');
+    }
+  };
+
   const handleStartTalk = async () => {
     if (connectingRef.current || realtime.status === 'connected') return;
 
     setCommError(null);
-    setDisplayBullets([]);
+    setDisplayBullets(['Checking Vercel AI Gateway…']);
     setDisplayTopic('CONNECTING');
+    setAppState(AppState.LISTENING);
     connectingRef.current = true;
 
     try {
+      await checkRealtimeTokenRoute();
+      setDisplayBullets(['Gateway ready. Opening microphone…']);
+
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('MICROPHONE: This browser does not support microphone capture.');
+      }
+
       micStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      setDisplayBullets(['Microphone ready. Linking Wingman…']);
       await realtime.connect();
     } catch (error: any) {
       console.error('Wingman connection failed', error);
       connectingRef.current = false;
       stopMicrophone();
       setAppState(AppState.IDLE);
-      setDisplayTopic('');
-      setCommError(
-        `LINK_OFFLINE: ${error?.message || 'Could not connect to the Wingman service.'}`,
-      );
+      setDisplayTopic('LINK OFFLINE');
+      setDisplayBullets([]);
+      setCommError(error?.message || 'Could not connect to the Wingman service.');
     }
   };
 
@@ -151,6 +185,7 @@ const App: React.FC = () => {
     connectingRef.current = false;
     setDisplayTopic('');
     setDisplayBullets([]);
+    setCommError(null);
     setAppState(AppState.IDLE);
   };
 
